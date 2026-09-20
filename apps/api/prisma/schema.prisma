@@ -1,0 +1,287 @@
+// =====================================================
+// HSE MANAGEMENT SYSTEM
+// CORE DATABASE SCHEMA
+// =====================================================
+
+// Prisma Client generation
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+// Database provider
+
+datasource db {
+  provider = "postgresql"
+}
+
+// =====================================================
+// 1. COMPANY
+// =====================================================
+
+model Company {
+  id       String  @id @default(uuid()) @db.Uuid
+  name     String
+  code     String  @unique
+  address  String?
+  phone    String?
+  email    String?
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  departments Department[]
+  projects    Project[]
+  employees   Employee[]
+  users       User[]
+  auditLogs   AuditLog[]
+
+  @@map("companies")
+}
+
+// =====================================================
+// 2. DEPARTMENT
+// =====================================================
+
+model Department {
+  id          String  @id @default(uuid()) @db.Uuid
+  companyId   String  @db.Uuid
+  name        String
+  description String?
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  employees Employee[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+  @@map("departments")
+}
+
+// =====================================================
+// 3. PROJECT
+// =====================================================
+
+model Project {
+  id         String    @id @default(uuid()) @db.Uuid
+  companyId  String    @db.Uuid
+  name       String
+  code       String
+  clientName String?
+  startDate  DateTime? @db.Date
+  endDate    DateTime? @db.Date
+  isActive   Boolean   @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  sites Site[]
+
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@map("projects")
+}
+
+// =====================================================
+// 4. SITE
+// =====================================================
+
+model Site {
+  id        String   @id @default(uuid()) @db.Uuid
+  projectId String   @db.Uuid
+  name      String
+  code      String
+  location  String?
+  latitude  Decimal? @db.Decimal(10, 7)
+  longitude Decimal? @db.Decimal(10, 7)
+  isActive  Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  project   Project  @relation(fields: [projectId], references: [id])
+
+  userAccess UserSiteAccess[]
+
+  @@unique([projectId, code])
+  @@index([projectId])
+  @@map("sites")
+}
+
+// =====================================================
+// 5. EMPLOYEE
+// =====================================================
+
+model Employee {
+  id             String    @id @default(uuid()) @db.Uuid
+  companyId      String    @db.Uuid
+  departmentId   String?   @db.Uuid
+  employeeNumber String
+  fullName       String
+  nationalId     String?
+  email          String?
+  phone          String?
+  jobTitle       String?
+  employmentType String    @default("EMPLOYEE")
+  hireDate       DateTime? @db.Date
+  isActive       Boolean   @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  department Department? @relation(fields: [departmentId], references: [id])
+
+  user User?
+
+  @@unique([companyId, employeeNumber])
+  @@index([departmentId])
+  @@map("employees")
+}
+
+// =====================================================
+// 6. ROLE
+// =====================================================
+
+model Role {
+  id          String  @id @default(uuid()) @db.Uuid
+  name        String  @unique
+  description String?
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users           User[]
+  rolePermissions RolePermission[]
+
+  @@map("roles")
+}
+
+// =====================================================
+// 7. PERMISSION
+// =====================================================
+
+model Permission {
+  id          String  @id @default(uuid()) @db.Uuid
+  module      String
+  action      String
+  description String?
+
+  createdAt DateTime @default(now())
+
+  rolePermissions RolePermission[]
+
+  @@unique([module, action])
+  @@map("permissions")
+}
+
+// =====================================================
+// 8. ROLE PERMISSION
+// =====================================================
+
+model RolePermission {
+  id           String @id @default(uuid()) @db.Uuid
+  roleId       String @db.Uuid
+  permissionId String @db.Uuid
+
+  createdAt DateTime @default(now())
+
+  role Role @relation(fields: [roleId], references: [id])
+
+  permission Permission @relation(fields: [permissionId], references: [id])
+
+  @@unique([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+// =====================================================
+// 9. USER
+// =====================================================
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  companyId    String    @db.Uuid
+  employeeId   String?   @unique @db.Uuid
+  roleId       String    @db.Uuid
+  username     String    @unique
+  email        String    @unique
+  passwordHash String
+  isActive     Boolean   @default(true)
+  lastLogin    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  employee Employee? @relation(fields: [employeeId], references: [id])
+
+  role Role @relation(fields: [roleId], references: [id])
+
+  siteAccess UserSiteAccess[]
+  auditLogs  AuditLog[]
+
+  @@index([companyId])
+  @@index([roleId])
+  @@map("users")
+}
+
+// =====================================================
+// 10. USER SITE ACCESS
+// =====================================================
+
+model UserSiteAccess {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  siteId String @db.Uuid
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  site Site @relation(fields: [siteId], references: [id])
+
+  @@unique([userId, siteId])
+  @@index([siteId])
+  @@map("user_site_access")
+}
+
+// =====================================================
+// 11. AUDIT LOG
+// =====================================================
+
+model AuditLog {
+  id        String  @id @default(uuid()) @db.Uuid
+  companyId String  @db.Uuid
+  userId    String? @db.Uuid
+
+  action    String
+  module    String
+  recordId  String?
+  oldValues Json?
+  newValues Json?
+  ipAddress String?
+
+  createdAt DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([companyId])
+  @@index([userId])
+  @@index([module, recordId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
