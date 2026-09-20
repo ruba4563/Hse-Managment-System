@@ -8,6 +8,8 @@ import { AuthController } from './auth.controller.js';
 
 import { AuthService } from './auth.service.js';
 
+import { JwtAuthGuard } from './jwt-auth.guard.js';
+
 @Module({
   imports: [
     JwtModule.registerAsync({
@@ -28,10 +30,18 @@ import { AuthService } from './auth.service.js';
     }),
   ],
 
-  controllers: [AuthController],
+  controllers: [
+    AuthController,
+  ],
 
-  providers: [AuthService],
+  providers: [
+    AuthService,
+    JwtAuthGuard,
+  ],
 
-  exports: [AuthService],
+  exports: [
+    AuthService,
+    JwtAuthGuard,
+  ],
 })
 export class AuthModule {}
