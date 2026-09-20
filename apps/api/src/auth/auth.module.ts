@@ -10,6 +10,9 @@ import { AuthService } from './auth.service.js';
 
 import { JwtAuthGuard } from './jwt-auth.guard.js';
 
+import { PermissionsGuard } from
+  './authorization/permissions.guard.js';
+
 @Module({
   imports: [
     JwtModule.registerAsync({
@@ -37,11 +40,14 @@ import { JwtAuthGuard } from './jwt-auth.guard.js';
   providers: [
     AuthService,
     JwtAuthGuard,
+    PermissionsGuard,
   ],
 
   exports: [
-    AuthService,
-    JwtAuthGuard,
-  ],
+  JwtModule,
+  AuthService,
+  JwtAuthGuard,
+  PermissionsGuard,
+],
 })
 export class AuthModule {}

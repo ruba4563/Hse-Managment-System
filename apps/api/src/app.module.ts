@@ -10,6 +10,8 @@ import { PrismaModule } from './prisma/prisma.module.js';
 
 import { AuthModule } from './auth/auth.module.js';
 
+
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -19,6 +21,8 @@ import { AuthModule } from './auth/auth.module.js';
     PrismaModule,
 
     AuthModule,
+
+    
   ],
 
   controllers: [
