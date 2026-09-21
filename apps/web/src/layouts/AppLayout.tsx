@@ -17,6 +17,8 @@ export default function AppLayout() {
     '/dashboard': 'Dashboard',
     '/companies': 'Company Management',
     '/departments': 'Department Management',
+    '/projects': 'Project Management',
+    '/sites': 'Site Management',
   };
 
   const pageTitle =
@@ -87,7 +89,22 @@ export default function AppLayout() {
               </NavLink>
             </>
           )}
-
+<NavLink
+  to="/projects"
+  className={({ isActive }) =>
+    `sidebar-link ${isActive ? 'active' : ''}`
+  }
+>
+  Project Management
+</NavLink>
+<NavLink
+  to="/sites"
+  className={({ isActive }) =>
+    `sidebar-link ${isActive ? 'active' : ''}`
+  }
+>
+  Site Management
+</NavLink>
         </nav>
 
         <div className="sidebar-bottom">

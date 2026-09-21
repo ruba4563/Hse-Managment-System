@@ -14,6 +14,10 @@ import { CompaniesModule } from './companies/companies.module.js';
 
 import { DepartmentsModule } from './departments/departments.module.js';
 
+import { ProjectsModule } from './projects/projects.module.js';
+
+import { SitesModule } from './sites/sites.module.js';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -27,6 +31,10 @@ import { DepartmentsModule } from './departments/departments.module.js';
     CompaniesModule,
 
     DepartmentsModule,
+
+    ProjectsModule,
+
+    SitesModule,
   ],
 
   controllers: [
