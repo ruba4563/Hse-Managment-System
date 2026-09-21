@@ -5,6 +5,7 @@ import {
 import {
   useAuth,
 } from '../auth/AuthContext';
+import { Link } from 'react-router-dom';
 
 export default function DashboardPage() {
   const navigate = useNavigate();
@@ -46,16 +47,23 @@ export default function DashboardPage() {
 
         </div>
 
-        <nav
+                <nav
           className="sidebar-navigation"
           aria-label="Main navigation"
         >
-          <a
-            href="/dashboard"
+          <Link
+            to="/dashboard"
             className="sidebar-link active"
           >
             Dashboard
-          </a>
+          </Link>
+
+          <Link
+            to="/companies"
+            className="sidebar-link"
+          >
+            Company Management
+          </Link>
         </nav>
 
         <div className="sidebar-bottom">

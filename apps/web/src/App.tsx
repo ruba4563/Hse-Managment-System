@@ -8,13 +8,13 @@ import LoginPage from './pages/LoginPage';
 
 import DashboardPage from './pages/DashboardPage';
 
+import CompanyPage from './pages/CompanyPage';
+
 import ProtectedRoute from './auth/ProtectedRoute';
 
 export default function App() {
   return (
     <Routes>
-
-      {/* Default route */}
 
       <Route
         path="/"
@@ -26,14 +26,10 @@ export default function App() {
         }
       />
 
-      {/* Public login page */}
-
       <Route
         path="/login"
         element={<LoginPage />}
       />
-
-      {/* Protected dashboard */}
 
       <Route
         path="/dashboard"
@@ -44,7 +40,14 @@ export default function App() {
         }
       />
 
-      {/* Unknown routes */}
+      <Route
+        path="/companies"
+        element={
+          <ProtectedRoute>
+            <CompanyPage />
+          </ProtectedRoute>
+        }
+      />
 
       <Route
         path="*"

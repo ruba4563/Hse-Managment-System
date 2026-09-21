@@ -648,3 +648,127 @@ a:focus-visible {
     font-size: 22px;
   }
 }
+
+/* ======================================
+   COMPANY MANAGEMENT
+====================================== */
+
+.management-page {
+  min-height: 100vh;
+  background: #f5f7fa;
+  padding: 40px;
+}
+
+.management-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 30px;
+}
+
+.management-eyebrow {
+  color: #278d86;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+}
+
+.management-heading h1 {
+  color: #132c3d;
+  font-size: 27px;
+  margin: 12px 0;
+}
+
+.management-heading p {
+  color: #7a8995;
+  font-size: 14px;
+}
+
+.company-code {
+  background: #e7f5f2;
+  color: #187d73;
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.management-card {
+  background: #ffffff;
+  border: 1px solid #e5eaf0;
+  border-radius: 14px;
+  padding: 35px;
+  max-width: 1050px;
+}
+
+.management-card-header {
+  margin-bottom: 30px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #eef1f4;
+}
+
+.management-card-header h2 {
+  font-size: 18px;
+  color: #143448;
+  margin: 0 0 10px;
+}
+
+.management-card-header p {
+  color: #84929e;
+  font-size: 13px;
+  margin: 0;
+}
+
+.management-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px 25px;
+}
+
+.form-full-width {
+  grid-column: 1 / -1;
+}
+
+.management-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 20px;
+  border-top: 1px solid #eef1f4;
+  margin-top: 10px;
+}
+
+.management-save {
+  width: auto;
+  min-width: 160px;
+  padding: 0 25px;
+}
+
+.success-message {
+  background: #edf9f3;
+  color: #18794e;
+  border: 1px solid #bce8d0;
+  padding: 14px;
+  border-radius: 8px;
+  margin-bottom: 25px;
+  font-size: 13px;
+}
+
+@media (max-width: 768px) {
+  .management-page {
+    padding: 20px;
+  }
+
+  .management-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .management-card {
+    padding: 20px;
+  }
+
+  .management-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
