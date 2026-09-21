@@ -1,180 +1,96 @@
-import {
-  useNavigate,
-} from 'react-router-dom';
-
-import {
-  useAuth,
-} from '../auth/AuthContext';
-import { Link } from 'react-router-dom';
+import { useAuth } from '../auth/AuthContext';
 
 export default function DashboardPage() {
-  const navigate = useNavigate();
-
-  const {
-    user,
-    logout,
-  } = useAuth();
-
-  const handleLogout = () => {
-    logout();
-
-    navigate('/login', {
-      replace: true,
-    });
-  };
+  const { user } = useAuth();
 
   if (!user) {
     return null;
   }
 
   return (
-    <div className="dashboard-layout">
+    <main className="dashboard-content">
 
-      {/* Sidebar */}
+      {/* WELCOME BANNER */}
 
-      <aside className="dashboard-sidebar">
+      <div className="welcome-banner">
 
-        <div className="sidebar-brand">
+        <span className="welcome-label">
+          AUTHENTICATED SESSION
+        </span>
 
-          <div className="sidebar-logo">
-            NH
-          </div>
+        <h2>
+          Welcome, {user.username}
+        </h2>
 
-          <div>
-            <h2>Nature Horizon</h2>
-            <p>HSE Management</p>
-          </div>
-
-        </div>
-
-                <nav
-          className="sidebar-navigation"
-          aria-label="Main navigation"
-        >
-          <Link
-            to="/dashboard"
-            className="sidebar-link active"
-          >
-            Dashboard
-          </Link>
-
-          <Link
-            to="/companies"
-            className="sidebar-link"
-          >
-            Company Management
-          </Link>
-        </nav>
-
-        <div className="sidebar-bottom">
-          HSE Management System
-        </div>
-
-      </aside>
-
-      {/* Main content */}
-
-      <div className="dashboard-main">
-
-        <header className="dashboard-header">
-
-          <div>
-            <h1>Dashboard</h1>
-            <p>HSE Management Overview</p>
-          </div>
-
-          <button
-            type="button"
-            className="logout-button"
-            onClick={handleLogout}
-          >
-            Logout
-          </button>
-
-        </header>
-
-        <main className="dashboard-content">
-
-          <div className="welcome-banner">
-
-            <span className="welcome-label">
-              AUTHENTICATED SESSION
-            </span>
-
-            <h2>
-              Welcome, {user.username}
-            </h2>
-
-            <p>
-              You have successfully signed in
-              to the HSE Management System.
-            </p>
-
-          </div>
-
-          <div className="dashboard-grid">
-
-            <div className="info-card">
-
-              <span className="info-label">
-                Username
-              </span>
-
-              <strong>
-                {user.username}
-              </strong>
-
-            </div>
-
-            <div className="info-card">
-
-              <span className="info-label">
-                Role
-              </span>
-
-              <strong>
-                {user.role.name}
-              </strong>
-
-            </div>
-
-            <div className="info-card">
-
-              <span className="info-label">
-                Company
-              </span>
-
-              <strong>
-                {user.company.name}
-              </strong>
-
-            </div>
-
-          </div>
-
-          <section className="system-notice">
-
-            <h3>
-              System status
-            </h3>
-
-            <p>
-              Your authenticated session
-              is active.
-            </p>
-
-            <p>
-              Operational HSE modules and
-              dashboard statistics will be
-              implemented in the next stages.
-            </p>
-
-          </section>
-
-        </main>
+        <p>
+          You have successfully signed in
+          to the HSE Management System.
+        </p>
 
       </div>
 
-    </div>
+      {/* INFORMATION CARDS */}
+
+      <div className="dashboard-grid">
+
+        <div className="info-card">
+
+          <span className="info-label">
+            Username
+          </span>
+
+          <strong>
+            {user.username}
+          </strong>
+
+        </div>
+
+        <div className="info-card">
+
+          <span className="info-label">
+            Role
+          </span>
+
+          <strong>
+            {user.role.name}
+          </strong>
+
+        </div>
+
+        <div className="info-card">
+
+          <span className="info-label">
+            Company
+          </span>
+
+          <strong>
+            {user.company.name}
+          </strong>
+
+        </div>
+
+      </div>
+
+      {/* DEVELOPMENT STATUS */}
+
+      <section className="system-notice">
+
+        <h3>
+          System Status
+        </h3>
+
+        <p>
+          Authentication and authorization
+          are operational.
+        </p>
+
+        <p>
+          Company and Department Management
+          are being implemented.
+        </p>
+
+      </section>
+
+    </main>
   );
 }

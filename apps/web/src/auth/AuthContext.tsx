@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useState,
+  useCallback,
 } from 'react';
 
 import type {
@@ -85,10 +86,9 @@ export function AuthProvider({
   const [session, setSession] =
     useState<Session | null>(null);
 
-  const logout = () => {
-    setSession(null);
-  };
-
+ const logout = useCallback(() => {
+  setSession(null);
+}, []);
   // Automatically clear an expired session.
   useEffect(() => {
     if (!session) {

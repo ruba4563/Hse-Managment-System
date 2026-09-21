@@ -12,6 +12,8 @@ import { AuthModule } from './auth/auth.module.js';
 
 import { CompaniesModule } from './companies/companies.module.js';
 
+import { DepartmentsModule } from './departments/departments.module.js';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -23,6 +25,8 @@ import { CompaniesModule } from './companies/companies.module.js';
     AuthModule,
 
     CompaniesModule,
+
+    DepartmentsModule,
   ],
 
   controllers: [
