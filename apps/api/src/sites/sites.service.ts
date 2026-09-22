@@ -121,94 +121,134 @@ export class SitesService {
   // 2. CREATE SITE
   // =====================================
 
-  async create(
-    companyId: string,
-    userId: string,
-    dto: CreateSiteDto,
-  ) {
-    const name = dto.name.trim();
-    const code = dto.code.trim();
+  // =====================================
+// CREATE SITE
+// With parent-project locking
+// =====================================
 
-    if (!name || !code) {
-      throw new BadRequestException(
-        'Site name and code are required',
-      );
-    }
+async create(
+  companyId: string,
+  userId: string,
+  dto: CreateSiteDto,
+) {
+  const name = dto.name.trim();
+  const code = dto.code.trim();
 
-    this.validateCoordinates(
-      dto.latitude,
-      dto.longitude,
+  if (!name || !code) {
+    throw new BadRequestException(
+      'Site name and code are required',
     );
-
-    try {
-      return await this.prisma.$transaction(async (tx) => {
-        const project = await tx.project.findFirst({
-          where: {
-            id: dto.projectId,
-            companyId,
-            isActive: true,
-          },
-        });
-
-        if (!project) {
-          throw new NotFoundException(
-            'Active project not found',
-          );
-        }
-
-        const existing = await tx.site.findFirst({
-          where: {
-            projectId: project.id,
-            code,
-          },
-        });
-
-        if (existing) {
-          throw new ConflictException(
-            'A site with this code already exists in the project',
-          );
-        }
-
-        const site = await tx.site.create({
-          data: {
-            projectId: project.id,
-            name,
-            code,
-            location: dto.location?.trim() || null,
-
-            latitude: dto.latitude,
-            longitude: dto.longitude,
-
-            isActive: true,
-          },
-        });
-
-        await tx.auditLog.create({
-          data: {
-            companyId,
-            userId,
-
-            module: 'sites',
-            action: 'CREATE',
-            recordId: site.id,
-
-            newValues: {
-              name: site.name,
-              code: site.code,
-              projectId: site.projectId,
-              location: site.location,
-              latitude: site.latitude?.toString() ?? null,
-              longitude: site.longitude?.toString() ?? null,
-            },
-          },
-        });
-
-        return site;
-      });
-    } catch (error) {
-      this.handleDatabaseError(error);
-    }
   }
+
+  this.validateCoordinates(
+    dto.latitude,
+    dto.longitude,
+  );
+
+  try {
+    return await this.prisma.$transaction(async (tx) => {
+
+      // 1. Lock the parent project.
+      // Project deactivation acquires this same lock.
+
+      const lockedProjects = await tx.$queryRaw<
+        Array<{ id: string }>
+      >`
+        SELECT "id"
+        FROM "projects"
+        WHERE "id" = ${dto.projectId}::uuid
+          AND "companyId" = ${companyId}::uuid
+        FOR UPDATE
+      `;
+
+      if (lockedProjects.length === 0) {
+        throw new NotFoundException(
+          'Active project not found',
+        );
+      }
+
+      // 2. Verify project status after acquiring the lock.
+
+      const project = await tx.project.findFirst({
+        where: {
+          id: dto.projectId,
+          companyId,
+          isActive: true,
+        },
+      });
+
+      if (!project) {
+        throw new NotFoundException(
+          'Active project not found',
+        );
+      }
+
+      // 3. Check duplicate site codes.
+
+      const existing = await tx.site.findFirst({
+        where: {
+          projectId: project.id,
+          code,
+        },
+      });
+
+      if (existing) {
+        throw new ConflictException(
+          'A site with this code already exists in the project',
+        );
+      }
+
+      // 4. Create the site.
+
+      const site = await tx.site.create({
+        data: {
+          projectId: project.id,
+
+          name,
+          code,
+
+          location:
+            dto.location?.trim() || null,
+
+          latitude: dto.latitude,
+          longitude: dto.longitude,
+
+          isActive: true,
+        },
+      });
+
+      // 5. Record the change in the same transaction.
+
+      await tx.auditLog.create({
+        data: {
+          companyId,
+          userId,
+
+          module: 'sites',
+          action: 'CREATE',
+          recordId: site.id,
+
+          newValues: {
+            name: site.name,
+            code: site.code,
+            projectId: site.projectId,
+            location: site.location,
+
+            latitude:
+              site.latitude?.toString() ?? null,
+
+            longitude:
+              site.longitude?.toString() ?? null,
+          },
+        },
+      });
+
+      return site;
+    });
+  } catch (error) {
+    this.handleDatabaseError(error);
+  }
+}
 
   // =====================================
   // 3. UPDATE SITE
