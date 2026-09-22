@@ -1233,3 +1233,35 @@ a:focus-visible {
     width: 100%;
   }
 }
+
+/* ======================================
+   EMPLOYEE MANAGEMENT
+====================================== */
+
+.employee-list-card {
+  max-width: none;
+}
+
+.employee-list-card .department-table {
+  min-width: 1050px;
+}
+
+.employee-list-card .department-table td {
+  overflow-wrap: anywhere;
+}
+
+.employee-list-card .department-name {
+  min-width: 160px;
+}
+
+/* Keep forms readable on smaller screens. */
+
+@media (max-width: 768px) {
+  .employee-list-card {
+    padding: 20px;
+  }
+
+  .employee-list-card .department-table-wrapper {
+    overflow-x: auto;
+  }
+}

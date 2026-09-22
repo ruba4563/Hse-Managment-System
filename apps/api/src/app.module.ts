@@ -18,6 +18,8 @@ import { ProjectsModule } from './projects/projects.module.js';
 
 import { SitesModule } from './sites/sites.module.js';
 
+import { EmployeesModule } from './employees/employees.module.js';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -25,16 +27,12 @@ import { SitesModule } from './sites/sites.module.js';
     }),
 
     PrismaModule,
-
     AuthModule,
-
     CompaniesModule,
-
     DepartmentsModule,
-
     ProjectsModule,
-
     SitesModule,
+    EmployeesModule,
   ],
 
   controllers: [

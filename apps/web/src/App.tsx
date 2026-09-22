@@ -19,6 +19,7 @@ import ProtectedRoute from './auth/ProtectedRoute';
 import AppLayout from './layouts/AppLayout';
 import ProjectsPage from './pages/ProjectsPage';
 import SitesPage from './pages/SitesPage';
+import EmployeesPage from './pages/EmployeesPage';
 
 function AdminRoute({
   children,
@@ -100,6 +101,14 @@ export default function App() {
   element={
     <AdminRoute>
       <SitesPage />
+    </AdminRoute>
+  }
+/>
+<Route
+  path="/employees"
+  element={
+    <AdminRoute>
+      <EmployeesPage />
     </AdminRoute>
   }
 />
