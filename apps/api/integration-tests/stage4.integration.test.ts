@@ -1566,6 +1566,460 @@ await t.test(
     }
   },
 );
+
+// ==========================================
+// TEST: SITE / USER ASSIGNMENT RACE
+// ==========================================
+
+await t.test(
+  'Concurrent site deactivation and user assignment preserve assignment ordering',
+
+  async () => {
+    // ------------------------------------
+    // 1. Create an active disposable site.
+    //
+    // Reuse the existing local project
+    // fixture created during suite setup.
+    // ------------------------------------
+
+    const siteResponse = await api(
+      'POST',
+      '/sites',
+      {
+        projectId: localProjectId,
+        name: `Assignment Race Site ${runId}`,
+        code: code('RACE-SITE-ASSIGN'),
+      },
+    );
+
+    assert.equal(
+      siteResponse.status,
+      201,
+    );
+
+    const siteId = record(
+      created.sites,
+      getId(siteResponse),
+    );
+
+    // ------------------------------------
+    // 2. Ensure this administrator has no
+    // pre-existing assignment.
+    // ------------------------------------
+
+    await prisma.userSiteAccess.deleteMany({
+      where: {
+        siteId,
+        userId: adminId,
+      },
+    });
+
+    // Remove ASSIGN_USER audit records for
+    // this brand-new site if an unexpected
+    // fixture created one.
+    await prisma.auditLog.deleteMany({
+      where: {
+        module: 'sites',
+        recordId: siteId,
+        action: 'ASSIGN_USER',
+      },
+    });
+
+    // ------------------------------------
+    // 3. Start assignment and deactivation
+    // concurrently.
+    // ------------------------------------
+
+    const [
+      assignmentResponse,
+      deactivateResponse,
+    ] = await Promise.all([
+      api(
+        'POST',
+        `/sites/${siteId}/access`,
+        {
+          userId: adminId,
+        },
+      ),
+
+      api(
+        'PATCH',
+        `/sites/${siteId}/deactivate`,
+      ),
+    ]);
+
+    // ------------------------------------
+    // 4. Read authoritative final state.
+    // ------------------------------------
+
+    const site =
+      await prisma.site.findUniqueOrThrow({
+        where: {
+          id: siteId,
+        },
+      });
+
+    const assignments =
+      await prisma.userSiteAccess.findMany({
+        where: {
+          siteId,
+          userId: adminId,
+        },
+      });
+
+    const siteAuditRecords =
+      await prisma.auditLog.findMany({
+        where: {
+          module: 'sites',
+          recordId: siteId,
+
+          action: {
+            in: [
+              'ASSIGN_USER',
+              'DEACTIVATE',
+            ],
+          },
+        },
+
+        orderBy: [
+          {
+            createdAt: 'asc',
+          },
+          {
+            id: 'asc',
+          },
+        ],
+      });
+
+    // ------------------------------------
+    // 5. Deactivation must succeed.
+    // ------------------------------------
+
+    assert.equal(
+      deactivateResponse.status,
+      200,
+      'Site deactivation unexpectedly failed',
+    );
+
+    assert.equal(
+      site.isActive,
+      false,
+      'Site should be inactive after deactivation',
+    );
+
+    // ------------------------------------
+    // 6. Two outcomes are valid.
+    // ------------------------------------
+
+    if (assignmentResponse.status === 201) {
+      // Assignment acquired the site lock
+      // first. It completed while the site
+      // was active, then deactivation ran.
+
+      assert.equal(
+        assignments.length,
+        1,
+        'Successful assignment was not persisted',
+      );
+
+      const assignAudit =
+        siteAuditRecords.find(
+          record =>
+            record.action === 'ASSIGN_USER',
+        );
+
+      const deactivateAudit =
+        siteAuditRecords.find(
+          record =>
+            record.action === 'DEACTIVATE',
+        );
+
+      assert.ok(
+        assignAudit,
+        'ASSIGN_USER audit record is missing',
+      );
+
+      assert.ok(
+        deactivateAudit,
+        'DEACTIVATE audit record is missing',
+      );
+
+      assert.ok(
+        assignAudit.createdAt.getTime() <=
+          deactivateAudit.createdAt.getTime(),
+        'SECURITY FAILURE: assignment was recorded after site deactivation',
+      );
+    } else {
+      // Deactivation acquired the lock first.
+      // The assignment must observe inactive
+      // state after waiting for that lock.
+
+      assert.equal(
+        assignmentResponse.status,
+        404,
+        'Assignment should be rejected after site deactivation',
+      );
+
+      assert.equal(
+        assignments.length,
+        0,
+        'Rejected assignment was unexpectedly persisted',
+      );
+
+      const assignAuditCount =
+        siteAuditRecords.filter(
+          record =>
+            record.action === 'ASSIGN_USER',
+        ).length;
+
+      assert.equal(
+        assignAuditCount,
+        0,
+        'Rejected assignment created an audit record',
+      );
+
+      const deactivateAuditCount =
+        siteAuditRecords.filter(
+          record =>
+            record.action === 'DEACTIVATE',
+        ).length;
+
+      assert.equal(
+        deactivateAuditCount,
+        1,
+        'Expected one DEACTIVATE audit record',
+      );
+    }
+  },
+);
+
+// ==========================================
+// TEST: REPEATED SITE / ASSIGNMENT RACES
+// ==========================================
+
+await t.test(
+  'Repeated site deactivation and assignment races remain consistent',
+
+  async () => {
+    const iterations = 10;
+
+    for (
+      let iteration = 0;
+      iteration < iterations;
+      iteration += 1
+    ) {
+      const siteCode =
+        `${code('RACE-SITE-LOOP')}-${iteration}`;
+
+      const createResponse = await api(
+        'POST',
+        '/sites',
+        {
+          projectId: localProjectId,
+
+          name:
+            `Repeated Assignment Race Site ${iteration}`,
+
+          code: siteCode,
+        },
+      );
+
+      assert.equal(
+        createResponse.status,
+        201,
+      );
+
+      const siteId = record(
+        created.sites,
+        getId(createResponse),
+      );
+
+      const [
+        assignmentResponse,
+        deactivateResponse,
+      ] = await Promise.all([
+        api(
+          'POST',
+          `/sites/${siteId}/access`,
+          {
+            userId: adminId,
+          },
+        ),
+
+        api(
+          'PATCH',
+          `/sites/${siteId}/deactivate`,
+        ),
+      ]);
+
+      assert.equal(
+        deactivateResponse.status,
+        200,
+        `Iteration ${iteration}: deactivation failed`,
+      );
+
+      assert.ok(
+        assignmentResponse.status === 201 ||
+          assignmentResponse.status === 404,
+        `Iteration ${iteration}: unexpected assignment status ${assignmentResponse.status}`,
+      );
+
+      const site =
+        await prisma.site.findUniqueOrThrow({
+          where: {
+            id: siteId,
+          },
+        });
+
+      assert.equal(
+        site.isActive,
+        false,
+        `Iteration ${iteration}: site remained active`,
+      );
+
+      const assignmentCount =
+        await prisma.userSiteAccess.count({
+          where: {
+            siteId,
+            userId: adminId,
+          },
+        });
+
+      if (assignmentResponse.status === 201) {
+        assert.equal(
+          assignmentCount,
+          1,
+          `Iteration ${iteration}: successful assignment missing`,
+        );
+
+        const audits =
+          await prisma.auditLog.findMany({
+            where: {
+              module: 'sites',
+              recordId: siteId,
+
+              action: {
+                in: [
+                  'ASSIGN_USER',
+                  'DEACTIVATE',
+                ],
+              },
+            },
+          });
+
+        const assignAudit = audits.find(
+          record =>
+            record.action === 'ASSIGN_USER',
+        );
+
+        const deactivateAudit = audits.find(
+          record =>
+            record.action === 'DEACTIVATE',
+        );
+
+        assert.ok(assignAudit);
+        assert.ok(deactivateAudit);
+
+        assert.ok(
+          assignAudit.createdAt.getTime() <=
+            deactivateAudit.createdAt.getTime(),
+          `Iteration ${iteration}: assignment occurred after deactivation`,
+        );
+      } else {
+        assert.equal(
+          assignmentCount,
+          0,
+          `Iteration ${iteration}: rejected assignment was persisted`,
+        );
+      }
+    }
+  },
+);
+
+// ==========================================
+// TEST: ASSIGNMENT AFTER DEACTIVATION
+// ==========================================
+
+await t.test(
+  'Inactive sites reject new user assignments',
+
+  async () => {
+    const createResponse = await api(
+      'POST',
+      '/sites',
+      {
+        projectId: localProjectId,
+
+        name:
+          `Inactive Assignment Test ${runId}`,
+
+        code:
+          code('INACTIVE-ASSIGN'),
+      },
+    );
+
+    assert.equal(
+      createResponse.status,
+      201,
+    );
+
+    const siteId = record(
+      created.sites,
+      getId(createResponse),
+    );
+
+    const deactivateResponse = await api(
+      'PATCH',
+      `/sites/${siteId}/deactivate`,
+    );
+
+    assert.equal(
+      deactivateResponse.status,
+      200,
+    );
+
+    const assignmentResponse = await api(
+      'POST',
+      `/sites/${siteId}/access`,
+      {
+        userId: adminId,
+      },
+    );
+
+    assert.equal(
+      assignmentResponse.status,
+      404,
+    );
+
+    const assignmentCount =
+      await prisma.userSiteAccess.count({
+        where: {
+          siteId,
+          userId: adminId,
+        },
+      });
+
+    assert.equal(
+      assignmentCount,
+      0,
+    );
+
+    const invalidAuditCount =
+      await prisma.auditLog.count({
+        where: {
+          module: 'sites',
+          action: 'ASSIGN_USER',
+          recordId: siteId,
+        },
+      });
+
+    assert.equal(
+      invalidAuditCount,
+      0,
+      'Rejected assignment created an audit record',
+    );
+  },
+);
       // ==================================
       // TEST 11: ACCOUNT DEACTIVATION
       // ==================================

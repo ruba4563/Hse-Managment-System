@@ -386,78 +386,124 @@ async create(
   // 4. DEACTIVATE SITE
   // =====================================
 
-  async deactivate(
-    companyId: string,
-    userId: string,
-    siteId: string,
-  ) {
-    return this.prisma.$transaction(async (tx) => {
-      const site = await tx.site.findFirst({
-        where: {
-          id: siteId,
-          project: {
-            is: {
-              companyId,
-            },
+ // =====================================
+// DEACTIVATE SITE
+// Serializes against user assignment.
+// =====================================
+
+async deactivate(
+  companyId: string,
+  userId: string,
+  siteId: string,
+) {
+  return this.prisma.$transaction(async (tx) => {
+
+    // ---------------------------------
+    // 1. Lock the site row.
+    //
+    // We join projects only to enforce
+    // company ownership. FOR UPDATE OF s
+    // locks the site row itself.
+    // ---------------------------------
+
+    const lockedSites = await tx.$queryRaw<
+      Array<{ id: string }>
+    >`
+      SELECT s."id"
+      FROM "sites" AS s
+      INNER JOIN "projects" AS p
+        ON p."id" = s."projectId"
+      WHERE s."id" = ${siteId}::uuid
+        AND p."companyId" = ${companyId}::uuid
+      FOR UPDATE OF s
+    `;
+
+    if (lockedSites.length === 0) {
+      throw new NotFoundException(
+        'Site not found',
+      );
+    }
+
+    // ---------------------------------
+    // 2. Re-read status after locking.
+    // ---------------------------------
+
+    const site = await tx.site.findFirst({
+      where: {
+        id: siteId,
+
+        project: {
+          is: {
+            companyId,
           },
         },
-      });
+      },
+    });
 
-      if (!site) {
-        throw new NotFoundException(
-          'Site not found',
-        );
-      }
+    if (!site) {
+      throw new NotFoundException(
+        'Site not found',
+      );
+    }
 
-      if (!site.isActive) {
-        throw new ConflictException(
-          'Site is already inactive',
-        );
-      }
+    if (!site.isActive) {
+      throw new ConflictException(
+        'Site is already inactive',
+      );
+    }
 
-      const result = await tx.site.updateMany({
-        where: {
-          id: siteId,
-          projectId: site.projectId,
+    // ---------------------------------
+    // 3. Deactivate while still holding
+    // the site-row lock.
+    // ---------------------------------
+
+    const result = await tx.site.updateMany({
+      where: {
+        id: siteId,
+        projectId: site.projectId,
+        isActive: true,
+      },
+
+      data: {
+        isActive: false,
+      },
+    });
+
+    if (result.count !== 1) {
+      throw new ConflictException(
+        'Site could not be deactivated',
+      );
+    }
+
+    // ---------------------------------
+    // 4. Audit in the same transaction.
+    // ---------------------------------
+
+    await tx.auditLog.create({
+      data: {
+        companyId,
+        userId,
+
+        module: 'sites',
+        action: 'DEACTIVATE',
+        recordId: siteId,
+
+        oldValues: {
           isActive: true,
         },
 
-        data: {
+        newValues: {
           isActive: false,
         },
-      });
-
-      if (result.count !== 1) {
-        throw new ConflictException(
-          'Site could not be deactivated',
-        );
-      }
-
-      await tx.auditLog.create({
-        data: {
-          companyId,
-          userId,
-
-          module: 'sites',
-          action: 'DEACTIVATE',
-          recordId: siteId,
-
-          oldValues: {
-            isActive: true,
-          },
-
-          newValues: {
-            isActive: false,
-          },
-        },
-      });
-
-      return {
-        message: 'Site deactivated successfully',
-        siteId,
-      };
+      },
     });
-  }
+
+    return {
+      message: 'Site deactivated successfully',
+      siteId,
+    };
+  });
+}
 
   // =====================================
   // 5. LIST SITE ASSIGNMENTS
@@ -517,92 +563,151 @@ async create(
   // 6. ASSIGN USER TO SITE
   // =====================================
 
-  async assignUser(
-    companyId: string,
-    actorId: string,
-    siteId: string,
-    targetUserId: string,
-  ) {
-    return this.prisma.$transaction(async (tx) => {
-      const site = await tx.site.findFirst({
-        where: {
-          id: siteId,
-          isActive: true,
+// =====================================
+// ASSIGN USER TO SITE
+// Serializes against site deactivation.
+// =====================================
 
-          project: {
-            is: {
-              companyId,
-              isActive: true,
-            },
+async assignUser(
+  companyId: string,
+  actorId: string,
+  siteId: string,
+  targetUserId: string,
+) {
+  return this.prisma.$transaction(async (tx) => {
+
+    // ---------------------------------
+    // 1. Lock the site row first.
+    //
+    // Site deactivation uses the exact
+    // same site-row locking protocol.
+    // ---------------------------------
+
+    const lockedSites = await tx.$queryRaw<
+      Array<{ id: string }>
+    >`
+      SELECT s."id"
+      FROM "sites" AS s
+      INNER JOIN "projects" AS p
+        ON p."id" = s."projectId"
+      WHERE s."id" = ${siteId}::uuid
+        AND p."companyId" = ${companyId}::uuid
+      FOR UPDATE OF s
+    `;
+
+    if (lockedSites.length === 0) {
+      throw new NotFoundException(
+        'Active site not found',
+      );
+    }
+
+    // ---------------------------------
+    // 2. Check site AND parent project
+    // after acquiring the site lock.
+    // ---------------------------------
+
+    const site = await tx.site.findFirst({
+      where: {
+        id: siteId,
+        isActive: true,
+
+        project: {
+          is: {
+            companyId,
+            isActive: true,
           },
         },
-      });
+      },
+    });
 
-      if (!site) {
-        throw new NotFoundException(
-          'Active site not found',
-        );
-      }
+    if (!site) {
+      throw new NotFoundException(
+        'Active site not found',
+      );
+    }
 
-      const user = await tx.user.findFirst({
-        where: {
-          id: targetUserId,
-          companyId,
-          isActive: true,
-          role: {
-            is: {
-              isActive: true,
-            },
+    // ---------------------------------
+    // 3. Validate target user.
+    // ---------------------------------
+
+    const user = await tx.user.findFirst({
+      where: {
+        id: targetUserId,
+        companyId,
+        isActive: true,
+
+        role: {
+          is: {
+            isActive: true,
           },
         },
-      });
+      },
+    });
 
-      if (!user) {
-        throw new NotFoundException(
-          'Active user not found in this company',
-        );
-      }
+    if (!user) {
+      throw new NotFoundException(
+        'Active user not found in this company',
+      );
+    }
 
-      const result = await tx.userSiteAccess.createMany({
-        data: [{
-          siteId,
-          userId: targetUserId,
-        }],
+    // ---------------------------------
+    // 4. Create assignment.
+    //
+    // The database unique constraint on
+    // userId + siteId prevents duplicates.
+    // ---------------------------------
+
+    const result =
+      await tx.userSiteAccess.createMany({
+        data: [
+          {
+            siteId,
+            userId: targetUserId,
+          },
+        ],
 
         skipDuplicates: true,
       });
 
-      if (result.count === 0) {
-        return {
-          message: 'User is already assigned to this site',
-          siteId,
-          userId: targetUserId,
-        };
-      }
-
-      await tx.auditLog.create({
-        data: {
-          companyId,
-          userId: actorId,
-
-          module: 'sites',
-          action: 'ASSIGN_USER',
-          recordId: siteId,
-
-          newValues: {
-            siteId,
-            assignedUserId: targetUserId,
-          },
-        },
-      });
-
+    // Existing assignment is treated as
+    // an idempotent successful request.
+    if (result.count === 0) {
       return {
-        message: 'User assigned successfully',
+        message:
+          'User is already assigned to this site',
+
         siteId,
         userId: targetUserId,
       };
+    }
+
+    // ---------------------------------
+    // 5. Audit new assignments only.
+    // ---------------------------------
+
+    await tx.auditLog.create({
+      data: {
+        companyId,
+        userId: actorId,
+
+        module: 'sites',
+        action: 'ASSIGN_USER',
+        recordId: siteId,
+
+        newValues: {
+          siteId,
+          assignedUserId: targetUserId,
+        },
+      },
     });
-  }
+
+    return {
+      message: 'User assigned successfully',
+      siteId,
+      userId: targetUserId,
+    };
+  });
+}
 
   // =====================================
   // 7. REMOVE USER ASSIGNMENT
