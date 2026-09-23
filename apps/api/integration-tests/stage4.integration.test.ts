@@ -1236,7 +1236,336 @@ await t.test(
     }
   },
 );
+// ==========================================
+// TEST: DEPARTMENT / EMPLOYEE CREATION RACE
+// ==========================================
 
+await t.test(
+  'Concurrent employee creation and department deactivation preserve consistency',
+
+  async () => {
+    // 1. Create a disposable department.
+
+    const departmentResponse = await api(
+      'POST',
+      '/departments',
+      {
+        name: `Creation Race Department ${runId}`,
+        description: 'Concurrency regression test',
+      },
+    );
+
+    assert.equal(
+      departmentResponse.status,
+      201,
+    );
+
+    const departmentId = record(
+      created.departments,
+      getId(departmentResponse),
+    );
+
+    // 2. Start the operations concurrently.
+
+    const employeeNumber =
+      code('RACE-EMP-CREATE');
+
+    const [
+      employeeResponse,
+      deactivateResponse,
+    ] = await Promise.all([
+      api(
+        'POST',
+        '/employees',
+        {
+          employeeNumber,
+          fullName: 'Creation Race Employee',
+          departmentId,
+        },
+      ),
+
+      api(
+        'PATCH',
+        `/departments/${departmentId}/deactivate`,
+      ),
+    ]);
+
+    // 3. Find any employee created by the race.
+    // Register it BEFORE asserting, so cleanup
+    // can remove it even if the test fails.
+
+    const createdEmployees =
+      await prisma.employee.findMany({
+        where: {
+          companyId: adminCompanyId,
+          employeeNumber,
+        },
+      });
+
+    for (const employee of createdEmployees) {
+      record(
+        created.employees,
+        employee.id,
+      );
+    }
+
+    // 4. Read the final department state.
+
+    const department =
+      await prisma.department.findUniqueOrThrow({
+        where: {
+          id: departmentId,
+        },
+      });
+
+    const activeEmployees =
+      await prisma.employee.count({
+        where: {
+          companyId: adminCompanyId,
+          departmentId,
+          isActive: true,
+        },
+      });
+
+    // 5. The critical invariant.
+
+    assert.ok(
+      department.isActive ||
+        activeEmployees === 0,
+      'SECURITY FAILURE: inactive department contains an active employee',
+    );
+
+    // 6. Exactly one operation should succeed.
+
+    const employeeCreated =
+      employeeResponse.status === 201;
+
+    const departmentDeactivated =
+      deactivateResponse.status === 200;
+
+    assert.notEqual(
+      employeeCreated,
+      departmentDeactivated,
+      'Unexpected concurrent operation results',
+    );
+
+    if (employeeCreated) {
+      // Employee creation won the lock.
+
+      assert.equal(
+        deactivateResponse.status,
+        409,
+      );
+
+      assert.equal(
+        department.isActive,
+        true,
+      );
+
+      assert.equal(
+        activeEmployees,
+        1,
+      );
+    } else {
+      // Department deactivation won the lock.
+
+      assert.equal(
+        employeeResponse.status,
+        400,
+      );
+
+      assert.equal(
+        deactivateResponse.status,
+        200,
+      );
+
+      assert.equal(
+        department.isActive,
+        false,
+      );
+
+      assert.equal(
+        activeEmployees,
+        0,
+      );
+    }
+  },
+);
+
+// ==========================================
+// TEST: DEPARTMENT / EMPLOYEE TRANSFER RACE
+// ==========================================
+
+await t.test(
+  'Concurrent employee reassignment and department deactivation preserve consistency',
+
+  async () => {
+    // 1. Create a destination department.
+
+    const departmentResponse = await api(
+      'POST',
+      '/departments',
+      {
+        name: `Transfer Race Department ${runId}`,
+        description: 'Employee transfer race test',
+      },
+    );
+
+    assert.equal(
+      departmentResponse.status,
+      201,
+    );
+
+    const departmentId = record(
+      created.departments,
+      getId(departmentResponse),
+    );
+
+    // 2. Create an employee without a department.
+
+    const employeeResponse = await api(
+      'POST',
+      '/employees',
+      {
+        employeeNumber:
+          code('RACE-EMP-TRANSFER'),
+
+        fullName:
+          'Transfer Race Employee',
+      },
+    );
+
+    assert.equal(
+      employeeResponse.status,
+      201,
+    );
+
+    const employeeId = record(
+      created.employees,
+      getId(employeeResponse),
+    );
+
+    // 3. Race employee reassignment against
+    // department deactivation.
+
+    const [
+      transferResponse,
+      deactivateResponse,
+    ] = await Promise.all([
+      api(
+        'PATCH',
+        `/employees/${employeeId}`,
+        {
+          departmentId,
+        },
+      ),
+
+      api(
+        'PATCH',
+        `/departments/${departmentId}/deactivate`,
+      ),
+    ]);
+
+    // 4. Read authoritative database state.
+
+    const department =
+      await prisma.department.findUniqueOrThrow({
+        where: {
+          id: departmentId,
+        },
+      });
+
+    const employee =
+      await prisma.employee.findUniqueOrThrow({
+        where: {
+          id: employeeId,
+        },
+      });
+
+    const activeEmployees =
+      await prisma.employee.count({
+        where: {
+          companyId: adminCompanyId,
+          departmentId,
+          isActive: true,
+        },
+      });
+
+    // 5. Assert the invariant.
+
+    assert.ok(
+      department.isActive ||
+        activeEmployees === 0,
+      'SECURITY FAILURE: employee assigned to an inactive department',
+    );
+
+    // 6. Only one competing operation
+    // may succeed.
+
+    const employeeTransferred =
+      transferResponse.status === 200;
+
+    const departmentDeactivated =
+      deactivateResponse.status === 200;
+
+    assert.notEqual(
+      employeeTransferred,
+      departmentDeactivated,
+      'Unexpected concurrent operation results',
+    );
+
+    if (employeeTransferred) {
+      // Reassignment won.
+
+      assert.equal(
+        deactivateResponse.status,
+        409,
+      );
+
+      assert.equal(
+        department.isActive,
+        true,
+      );
+
+      assert.equal(
+        employee.departmentId,
+        departmentId,
+      );
+
+      assert.equal(
+        activeEmployees,
+        1,
+      );
+    } else {
+      // Deactivation won.
+
+      assert.equal(
+        transferResponse.status,
+        400,
+      );
+
+      assert.equal(
+        deactivateResponse.status,
+        200,
+      );
+
+      assert.equal(
+        department.isActive,
+        false,
+      );
+
+      assert.equal(
+        employee.departmentId,
+        null,
+      );
+
+      assert.equal(
+        activeEmployees,
+        0,
+      );
+    }
+  },
+);
       // ==================================
       // TEST 11: ACCOUNT DEACTIVATION
       // ==================================
