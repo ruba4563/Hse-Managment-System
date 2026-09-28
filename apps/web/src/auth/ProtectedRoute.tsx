@@ -1,23 +1,17 @@
 import {
   Navigate,
+  Outlet,
 } from 'react-router-dom';
-
-import type {
-  ReactNode,
-} from 'react';
 
 import {
   useAuth,
 } from './AuthContext';
 
-interface ProtectedRouteProps {
-  children: ReactNode;
-}
-
-export default function ProtectedRoute({
-  children,
-}: ProtectedRouteProps) {
-  const { isAuthenticated } = useAuth();
+export default function ProtectedRoute() {
+  const {
+    isAuthenticated,
+  } =
+    useAuth();
 
   if (!isAuthenticated) {
     return (
@@ -28,5 +22,5 @@ export default function ProtectedRoute({
     );
   }
 
-  return <>{children}</>;
+  return <Outlet />;
 }

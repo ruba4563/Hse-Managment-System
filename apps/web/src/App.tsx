@@ -4,121 +4,180 @@ import {
   Routes,
 } from 'react-router-dom';
 
-import { useAuth } from './auth/AuthContext';
-
 import LoginPage from './pages/LoginPage';
-
 import DashboardPage from './pages/DashboardPage';
 
 import CompanyPage from './pages/CompanyPage';
-
 import DepartmentsPage from './pages/DepartmentsPage';
-
-import ProtectedRoute from './auth/ProtectedRoute';
-
-import AppLayout from './layouts/AppLayout';
 import ProjectsPage from './pages/ProjectsPage';
 import SitesPage from './pages/SitesPage';
 import EmployeesPage from './pages/EmployeesPage';
+import UsersPage from './pages/UsersPage';
 
-function AdminRoute({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  const { user } = useAuth();
+import AppLayout from './layouts/AppLayout';
 
-  if (user?.role.name !== 'SUPER_ADMIN') {
-    return <Navigate to="/dashboard" replace />;
-  }
+import ProtectedRoute from './auth/ProtectedRoute';
+import PermissionRoute from './auth/PermissionRoute';
 
-  return <>{children}</>;
-}
+// =====================================================
+// APP ROUTES
+// =====================================================
 
 export default function App() {
   return (
     <Routes>
 
-      {/* PUBLIC LOGIN */}
+      {/* =============================================
+          PUBLIC
+      ============================================== */}
 
       <Route
         path="/login"
-        element={<LoginPage />}
+        element={
+          <LoginPage />
+        }
       />
 
-      {/* PROTECTED APPLICATION */}
+      {/* =============================================
+          AUTHENTICATED AREA
+      ============================================== */}
 
       <Route
         element={
-          <ProtectedRoute>
-            <AppLayout />
-          </ProtectedRoute>
+          <ProtectedRoute />
         }
       >
-
         <Route
-          path="/"
           element={
-            <Navigate to="/dashboard" replace />
+            <AppLayout />
           }
-        />
+        >
 
-        <Route
-          path="/dashboard"
-          element={<DashboardPage />}
-        />
+          {/* DASHBOARD */}
 
-        <Route
-          path="/companies"
-          element={
-            <AdminRoute>
-              <CompanyPage />
-            </AdminRoute>
-          }
-        />
+          <Route
+            index
+            element={
+              <DashboardPage />
+            }
+          />
 
-        <Route
-          path="/departments"
-          element={
-            <AdminRoute>
-              <DepartmentsPage />
-            </AdminRoute>
-          }
-        />
+          {/* COMPANY */}
 
+          <Route
+            element={
+              <PermissionRoute
+                permission="companies:read"
+              />
+            }
+          >
+            <Route
+              path="companies"
+              element={
+                <CompanyPage />
+              }
+            />
+          </Route>
+
+          {/* DEPARTMENTS */}
+
+          <Route
+            element={
+              <PermissionRoute
+                permission="departments:read"
+              />
+            }
+          >
+            <Route
+              path="departments"
+              element={
+                <DepartmentsPage />
+              }
+            />
+          </Route>
+
+          {/* PROJECTS */}
+
+          <Route
+            element={
+              <PermissionRoute
+                permission="projects:read"
+              />
+            }
+          >
+            <Route
+              path="projects"
+              element={
+                <ProjectsPage />
+              }
+            />
+          </Route>
+
+          {/* SITES */}
+
+          <Route
+            element={
+              <PermissionRoute
+                permission="sites:read"
+              />
+            }
+          >
+            <Route
+              path="sites"
+              element={
+                <SitesPage />
+              }
+            />
+          </Route>
+
+          {/* EMPLOYEES */}
+
+          <Route
+            element={
+              <PermissionRoute
+                permission="employees:read"
+              />
+            }
+          >
+            <Route
+              path="employees"
+              element={
+                <EmployeesPage />
+              }
+            />
+          </Route>
+
+          {/* USERS */}
+
+          <Route
+            element={
+              <PermissionRoute
+                permission="users:read"
+              />
+            }
+          >
+            <Route
+              path="users"
+              element={
+                <UsersPage />
+              }
+            />
+          </Route>
+
+        </Route>
       </Route>
 
-      <Route
-  path="/projects"
-  element={
-    <AdminRoute>
-      <ProjectsPage />
-    </AdminRoute>
-  }
-/>
-<Route
-  path="/sites"
-  element={
-    <AdminRoute>
-      <SitesPage />
-    </AdminRoute>
-  }
-/>
-<Route
-  path="/employees"
-  element={
-    <AdminRoute>
-      <EmployeesPage />
-    </AdminRoute>
-  }
-/>
-
-      {/* UNKNOWN ROUTES */}
+      {/* =============================================
+          FALLBACK
+      ============================================== */}
 
       <Route
         path="*"
         element={
-          <Navigate to="/dashboard" replace />
+          <Navigate
+            to="/"
+            replace
+          />
         }
       />
 
