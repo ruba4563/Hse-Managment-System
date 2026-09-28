@@ -268,32 +268,66 @@ export class DepartmentsService {
   // 4. Deactivate department
   // -----------------------------------------
 
-  async deactivate(
-    companyId: string,
-    userId: string,
-    departmentId: string,
-  ) {
-    return this.prisma.$transaction(async (tx) => {
-      const department = await tx.department.findFirst({
+  // =====================================
+// DEACTIVATE DEPARTMENT
+// Protected against concurrent employee
+// creation and department assignment.
+// =====================================
+
+async deactivate(
+  companyId: string,
+  userId: string,
+  departmentId: string,
+) {
+  return this.prisma.$transaction(async (tx) => {
+
+    // 1. Lock the department row.
+    // Employee creation and reassignment
+    // must acquire this same lock.
+
+    const lockedDepartments = await tx.$queryRaw<
+      Array<{ id: string }>
+    >`
+      SELECT "id"
+      FROM "departments"
+      WHERE "id" = ${departmentId}::uuid
+        AND "companyId" = ${companyId}::uuid
+      FOR UPDATE
+    `;
+
+    if (lockedDepartments.length === 0) {
+      throw new NotFoundException(
+        'Department not found',
+      );
+    }
+
+    // 2. Check status AFTER acquiring the lock.
+
+    const department =
+      await tx.department.findFirst({
         where: {
           id: departmentId,
           companyId,
         },
       });
 
-      if (!department) {
-        throw new NotFoundException(
-          'Department not found',
-        );
-      }
+    if (!department) {
+      throw new NotFoundException(
+        'Department not found',
+      );
+    }
 
-      if (!department.isActive) {
-        throw new ConflictException(
-          'Department is already inactive',
-        );
-      }
+    if (!department.isActive) {
+      throw new ConflictException(
+        'Department is already inactive',
+      );
+    }
 
-      const activeEmployees = await tx.employee.count({
+    // 3. Count active employees while
+    // holding the parent department lock.
+
+    const activeEmployees =
+      await tx.employee.count({
         where: {
           companyId,
           departmentId,
@@ -301,13 +335,16 @@ export class DepartmentsService {
         },
       });
 
-      if (activeEmployees > 0) {
-        throw new ConflictException(
-          'Cannot deactivate a department with active employees',
-        );
-      }
+    if (activeEmployees > 0) {
+      throw new ConflictException(
+        'Cannot deactivate a department with active employees',
+      );
+    }
 
-      const result = await tx.department.updateMany({
+    // 4. Deactivate the department.
+
+    const result =
+      await tx.department.updateMany({
         where: {
           id: departmentId,
           companyId,
@@ -319,35 +356,38 @@ export class DepartmentsService {
         },
       });
 
-      if (result.count !== 1) {
-        throw new ConflictException(
-          'Department could not be deactivated',
-        );
-      }
+    if (result.count !== 1) {
+      throw new ConflictException(
+        'Department could not be deactivated',
+      );
+    }
 
-      await tx.auditLog.create({
-        data: {
-          companyId,
-          userId,
+    // 5. Record the operation in the
+    // same database transaction.
 
-          module: 'departments',
-          action: 'DEACTIVATE',
-          recordId: departmentId,
+    await tx.auditLog.create({
+      data: {
+        companyId,
+        userId,
 
-          oldValues: {
-            isActive: true,
-          },
+        module: 'departments',
+        action: 'DEACTIVATE',
+        recordId: departmentId,
 
-          newValues: {
-            isActive: false,
-          },
+        oldValues: {
+          isActive: true,
         },
-      });
 
-      return {
-        message: 'Department deactivated successfully',
-        departmentId,
-      };
+        newValues: {
+          isActive: false,
+        },
+      },
     });
-  }
+
+    return {
+      message: 'Department deactivated successfully',
+      departmentId,
+    };
+  });
+}
 }

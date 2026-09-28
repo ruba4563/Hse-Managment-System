@@ -121,94 +121,134 @@ export class SitesService {
   // 2. CREATE SITE
   // =====================================
 
-  async create(
-    companyId: string,
-    userId: string,
-    dto: CreateSiteDto,
-  ) {
-    const name = dto.name.trim();
-    const code = dto.code.trim();
+  // =====================================
+// CREATE SITE
+// With parent-project locking
+// =====================================
 
-    if (!name || !code) {
-      throw new BadRequestException(
-        'Site name and code are required',
-      );
-    }
+async create(
+  companyId: string,
+  userId: string,
+  dto: CreateSiteDto,
+) {
+  const name = dto.name.trim();
+  const code = dto.code.trim();
 
-    this.validateCoordinates(
-      dto.latitude,
-      dto.longitude,
+  if (!name || !code) {
+    throw new BadRequestException(
+      'Site name and code are required',
     );
-
-    try {
-      return await this.prisma.$transaction(async (tx) => {
-        const project = await tx.project.findFirst({
-          where: {
-            id: dto.projectId,
-            companyId,
-            isActive: true,
-          },
-        });
-
-        if (!project) {
-          throw new NotFoundException(
-            'Active project not found',
-          );
-        }
-
-        const existing = await tx.site.findFirst({
-          where: {
-            projectId: project.id,
-            code,
-          },
-        });
-
-        if (existing) {
-          throw new ConflictException(
-            'A site with this code already exists in the project',
-          );
-        }
-
-        const site = await tx.site.create({
-          data: {
-            projectId: project.id,
-            name,
-            code,
-            location: dto.location?.trim() || null,
-
-            latitude: dto.latitude,
-            longitude: dto.longitude,
-
-            isActive: true,
-          },
-        });
-
-        await tx.auditLog.create({
-          data: {
-            companyId,
-            userId,
-
-            module: 'sites',
-            action: 'CREATE',
-            recordId: site.id,
-
-            newValues: {
-              name: site.name,
-              code: site.code,
-              projectId: site.projectId,
-              location: site.location,
-              latitude: site.latitude?.toString() ?? null,
-              longitude: site.longitude?.toString() ?? null,
-            },
-          },
-        });
-
-        return site;
-      });
-    } catch (error) {
-      this.handleDatabaseError(error);
-    }
   }
+
+  this.validateCoordinates(
+    dto.latitude,
+    dto.longitude,
+  );
+
+  try {
+    return await this.prisma.$transaction(async (tx) => {
+
+      // 1. Lock the parent project.
+      // Project deactivation acquires this same lock.
+
+      const lockedProjects = await tx.$queryRaw<
+        Array<{ id: string }>
+      >`
+        SELECT "id"
+        FROM "projects"
+        WHERE "id" = ${dto.projectId}::uuid
+          AND "companyId" = ${companyId}::uuid
+        FOR UPDATE
+      `;
+
+      if (lockedProjects.length === 0) {
+        throw new NotFoundException(
+          'Active project not found',
+        );
+      }
+
+      // 2. Verify project status after acquiring the lock.
+
+      const project = await tx.project.findFirst({
+        where: {
+          id: dto.projectId,
+          companyId,
+          isActive: true,
+        },
+      });
+
+      if (!project) {
+        throw new NotFoundException(
+          'Active project not found',
+        );
+      }
+
+      // 3. Check duplicate site codes.
+
+      const existing = await tx.site.findFirst({
+        where: {
+          projectId: project.id,
+          code,
+        },
+      });
+
+      if (existing) {
+        throw new ConflictException(
+          'A site with this code already exists in the project',
+        );
+      }
+
+      // 4. Create the site.
+
+      const site = await tx.site.create({
+        data: {
+          projectId: project.id,
+
+          name,
+          code,
+
+          location:
+            dto.location?.trim() || null,
+
+          latitude: dto.latitude,
+          longitude: dto.longitude,
+
+          isActive: true,
+        },
+      });
+
+      // 5. Record the change in the same transaction.
+
+      await tx.auditLog.create({
+        data: {
+          companyId,
+          userId,
+
+          module: 'sites',
+          action: 'CREATE',
+          recordId: site.id,
+
+          newValues: {
+            name: site.name,
+            code: site.code,
+            projectId: site.projectId,
+            location: site.location,
+
+            latitude:
+              site.latitude?.toString() ?? null,
+
+            longitude:
+              site.longitude?.toString() ?? null,
+          },
+        },
+      });
+
+      return site;
+    });
+  } catch (error) {
+    this.handleDatabaseError(error);
+  }
+}
 
   // =====================================
   // 3. UPDATE SITE
@@ -346,78 +386,124 @@ export class SitesService {
   // 4. DEACTIVATE SITE
   // =====================================
 
-  async deactivate(
-    companyId: string,
-    userId: string,
-    siteId: string,
-  ) {
-    return this.prisma.$transaction(async (tx) => {
-      const site = await tx.site.findFirst({
-        where: {
-          id: siteId,
-          project: {
-            is: {
-              companyId,
-            },
+ // =====================================
+// DEACTIVATE SITE
+// Serializes against user assignment.
+// =====================================
+
+async deactivate(
+  companyId: string,
+  userId: string,
+  siteId: string,
+) {
+  return this.prisma.$transaction(async (tx) => {
+
+    // ---------------------------------
+    // 1. Lock the site row.
+    //
+    // We join projects only to enforce
+    // company ownership. FOR UPDATE OF s
+    // locks the site row itself.
+    // ---------------------------------
+
+    const lockedSites = await tx.$queryRaw<
+      Array<{ id: string }>
+    >`
+      SELECT s."id"
+      FROM "sites" AS s
+      INNER JOIN "projects" AS p
+        ON p."id" = s."projectId"
+      WHERE s."id" = ${siteId}::uuid
+        AND p."companyId" = ${companyId}::uuid
+      FOR UPDATE OF s
+    `;
+
+    if (lockedSites.length === 0) {
+      throw new NotFoundException(
+        'Site not found',
+      );
+    }
+
+    // ---------------------------------
+    // 2. Re-read status after locking.
+    // ---------------------------------
+
+    const site = await tx.site.findFirst({
+      where: {
+        id: siteId,
+
+        project: {
+          is: {
+            companyId,
           },
         },
-      });
+      },
+    });
 
-      if (!site) {
-        throw new NotFoundException(
-          'Site not found',
-        );
-      }
+    if (!site) {
+      throw new NotFoundException(
+        'Site not found',
+      );
+    }
 
-      if (!site.isActive) {
-        throw new ConflictException(
-          'Site is already inactive',
-        );
-      }
+    if (!site.isActive) {
+      throw new ConflictException(
+        'Site is already inactive',
+      );
+    }
 
-      const result = await tx.site.updateMany({
-        where: {
-          id: siteId,
-          projectId: site.projectId,
+    // ---------------------------------
+    // 3. Deactivate while still holding
+    // the site-row lock.
+    // ---------------------------------
+
+    const result = await tx.site.updateMany({
+      where: {
+        id: siteId,
+        projectId: site.projectId,
+        isActive: true,
+      },
+
+      data: {
+        isActive: false,
+      },
+    });
+
+    if (result.count !== 1) {
+      throw new ConflictException(
+        'Site could not be deactivated',
+      );
+    }
+
+    // ---------------------------------
+    // 4. Audit in the same transaction.
+    // ---------------------------------
+
+    await tx.auditLog.create({
+      data: {
+        companyId,
+        userId,
+
+        module: 'sites',
+        action: 'DEACTIVATE',
+        recordId: siteId,
+
+        oldValues: {
           isActive: true,
         },
 
-        data: {
+        newValues: {
           isActive: false,
         },
-      });
-
-      if (result.count !== 1) {
-        throw new ConflictException(
-          'Site could not be deactivated',
-        );
-      }
-
-      await tx.auditLog.create({
-        data: {
-          companyId,
-          userId,
-
-          module: 'sites',
-          action: 'DEACTIVATE',
-          recordId: siteId,
-
-          oldValues: {
-            isActive: true,
-          },
-
-          newValues: {
-            isActive: false,
-          },
-        },
-      });
-
-      return {
-        message: 'Site deactivated successfully',
-        siteId,
-      };
+      },
     });
-  }
+
+    return {
+      message: 'Site deactivated successfully',
+      siteId,
+    };
+  });
+}
 
   // =====================================
   // 5. LIST SITE ASSIGNMENTS
@@ -477,92 +563,151 @@ export class SitesService {
   // 6. ASSIGN USER TO SITE
   // =====================================
 
-  async assignUser(
-    companyId: string,
-    actorId: string,
-    siteId: string,
-    targetUserId: string,
-  ) {
-    return this.prisma.$transaction(async (tx) => {
-      const site = await tx.site.findFirst({
-        where: {
-          id: siteId,
-          isActive: true,
+// =====================================
+// ASSIGN USER TO SITE
+// Serializes against site deactivation.
+// =====================================
 
-          project: {
-            is: {
-              companyId,
-              isActive: true,
-            },
+async assignUser(
+  companyId: string,
+  actorId: string,
+  siteId: string,
+  targetUserId: string,
+) {
+  return this.prisma.$transaction(async (tx) => {
+
+    // ---------------------------------
+    // 1. Lock the site row first.
+    //
+    // Site deactivation uses the exact
+    // same site-row locking protocol.
+    // ---------------------------------
+
+    const lockedSites = await tx.$queryRaw<
+      Array<{ id: string }>
+    >`
+      SELECT s."id"
+      FROM "sites" AS s
+      INNER JOIN "projects" AS p
+        ON p."id" = s."projectId"
+      WHERE s."id" = ${siteId}::uuid
+        AND p."companyId" = ${companyId}::uuid
+      FOR UPDATE OF s
+    `;
+
+    if (lockedSites.length === 0) {
+      throw new NotFoundException(
+        'Active site not found',
+      );
+    }
+
+    // ---------------------------------
+    // 2. Check site AND parent project
+    // after acquiring the site lock.
+    // ---------------------------------
+
+    const site = await tx.site.findFirst({
+      where: {
+        id: siteId,
+        isActive: true,
+
+        project: {
+          is: {
+            companyId,
+            isActive: true,
           },
         },
-      });
+      },
+    });
 
-      if (!site) {
-        throw new NotFoundException(
-          'Active site not found',
-        );
-      }
+    if (!site) {
+      throw new NotFoundException(
+        'Active site not found',
+      );
+    }
 
-      const user = await tx.user.findFirst({
-        where: {
-          id: targetUserId,
-          companyId,
-          isActive: true,
-          role: {
-            is: {
-              isActive: true,
-            },
+    // ---------------------------------
+    // 3. Validate target user.
+    // ---------------------------------
+
+    const user = await tx.user.findFirst({
+      where: {
+        id: targetUserId,
+        companyId,
+        isActive: true,
+
+        role: {
+          is: {
+            isActive: true,
           },
         },
-      });
+      },
+    });
 
-      if (!user) {
-        throw new NotFoundException(
-          'Active user not found in this company',
-        );
-      }
+    if (!user) {
+      throw new NotFoundException(
+        'Active user not found in this company',
+      );
+    }
 
-      const result = await tx.userSiteAccess.createMany({
-        data: [{
-          siteId,
-          userId: targetUserId,
-        }],
+    // ---------------------------------
+    // 4. Create assignment.
+    //
+    // The database unique constraint on
+    // userId + siteId prevents duplicates.
+    // ---------------------------------
+
+    const result =
+      await tx.userSiteAccess.createMany({
+        data: [
+          {
+            siteId,
+            userId: targetUserId,
+          },
+        ],
 
         skipDuplicates: true,
       });
 
-      if (result.count === 0) {
-        return {
-          message: 'User is already assigned to this site',
-          siteId,
-          userId: targetUserId,
-        };
-      }
-
-      await tx.auditLog.create({
-        data: {
-          companyId,
-          userId: actorId,
-
-          module: 'sites',
-          action: 'ASSIGN_USER',
-          recordId: siteId,
-
-          newValues: {
-            siteId,
-            assignedUserId: targetUserId,
-          },
-        },
-      });
-
+    // Existing assignment is treated as
+    // an idempotent successful request.
+    if (result.count === 0) {
       return {
-        message: 'User assigned successfully',
+        message:
+          'User is already assigned to this site',
+
         siteId,
         userId: targetUserId,
       };
+    }
+
+    // ---------------------------------
+    // 5. Audit new assignments only.
+    // ---------------------------------
+
+    await tx.auditLog.create({
+      data: {
+        companyId,
+        userId: actorId,
+
+        module: 'sites',
+        action: 'ASSIGN_USER',
+        recordId: siteId,
+
+        newValues: {
+          siteId,
+          assignedUserId: targetUserId,
+        },
+      },
     });
-  }
+
+    return {
+      message: 'User assigned successfully',
+      siteId,
+      userId: targetUserId,
+    };
+  });
+}
 
   // =====================================
   // 7. REMOVE USER ASSIGNMENT

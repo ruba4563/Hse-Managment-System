@@ -1,33 +1,32 @@
-import type { Request } from 'express';
+import type {
+  Request,
+} from 'express';
 
-// Expected information inside the signed JWT
-export interface JwtPayload {
-  sub: string;
-  username: string;
-  iat?: number;
-  exp?: number;
-  iss?: string;
-  aud?: string | string[];
+export interface AuthenticatedCompany {
+  id: string;
+  name: string;
 }
 
-// Safe information exposed to controllers
+export interface AuthenticatedRole {
+  id: string;
+  name: string;
+}
+
 export interface AuthenticatedUser {
   id: string;
+
   username: string;
+
   email: string;
 
-  role: {
-    id: string;
-    name: string;
-  };
+  company: AuthenticatedCompany;
 
-  company: {
-    id: string;
-    name: string;
-  };
+  role: AuthenticatedRole;
+
+  permissions: string[];
 }
 
-// Express request after authentication
-export interface AuthenticatedRequest extends Request {
+export interface AuthenticatedRequest
+  extends Request {
   user: AuthenticatedUser;
 }

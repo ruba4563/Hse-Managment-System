@@ -19,7 +19,7 @@ import { ProjectsModule } from './projects/projects.module.js';
 import { SitesModule } from './sites/sites.module.js';
 
 import { EmployeesModule } from './employees/employees.module.js';
-
+import { UsersModule } from './users/users.module.js';
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -33,6 +33,7 @@ import { EmployeesModule } from './employees/employees.module.js';
     ProjectsModule,
     SitesModule,
     EmployeesModule,
+       UsersModule,
   ],
 
   controllers: [

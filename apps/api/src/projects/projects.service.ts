@@ -355,85 +355,118 @@ export class ProjectsService {
   // 4. DEACTIVATE PROJECT
   // =====================================
 
-  async deactivate(
-    companyId: string,
-    userId: string,
-    projectId: string,
-  ) {
-    return this.prisma.$transaction(async (tx) => {
-      const project = await tx.project.findFirst({
-        where: {
-          id: projectId,
-          companyId,
-        },
-      });
+ // =====================================
+// DEACTIVATE PROJECT
+// With project-row locking
+// =====================================
 
-      if (!project) {
-        throw new NotFoundException(
-          'Project not found',
-        );
-      }
+async deactivate(
+  companyId: string,
+  userId: string,
+  projectId: string,
+) {
+  return this.prisma.$transaction(async (tx) => {
 
-      if (!project.isActive) {
-        throw new ConflictException(
-          'Project is already inactive',
-        );
-      }
+    // 1. Lock the project row.
+    // Site creation will acquire this same lock.
 
-      const activeSites = await tx.site.count({
-        where: {
-          projectId,
+    const lockedProjects = await tx.$queryRaw<
+      Array<{ id: string }>
+    >`
+      SELECT "id"
+      FROM "projects"
+      WHERE "id" = ${projectId}::uuid
+        AND "companyId" = ${companyId}::uuid
+      FOR UPDATE
+    `;
+
+    if (lockedProjects.length === 0) {
+      throw new NotFoundException(
+        'Project not found',
+      );
+    }
+
+    // 2. Read the project after acquiring the lock.
+
+    const project = await tx.project.findFirst({
+      where: {
+        id: projectId,
+        companyId,
+      },
+    });
+
+    if (!project) {
+      throw new NotFoundException(
+        'Project not found',
+      );
+    }
+
+    if (!project.isActive) {
+      throw new ConflictException(
+        'Project is already inactive',
+      );
+    }
+
+    // 3. Check active sites while holding the lock.
+
+    const activeSites = await tx.site.count({
+      where: {
+        projectId,
+        isActive: true,
+      },
+    });
+
+    if (activeSites > 0) {
+      throw new ConflictException(
+        'Cannot deactivate a project with active sites',
+      );
+    }
+
+    // 4. Update the project.
+
+    const result = await tx.project.updateMany({
+      where: {
+        id: projectId,
+        companyId,
+        isActive: true,
+      },
+
+      data: {
+        isActive: false,
+      },
+    });
+
+    if (result.count !== 1) {
+      throw new ConflictException(
+        'Project could not be deactivated',
+      );
+    }
+
+    // 5. Record the change in the same transaction.
+
+    await tx.auditLog.create({
+      data: {
+        companyId,
+        userId,
+
+        module: 'projects',
+        action: 'DEACTIVATE',
+        recordId: projectId,
+
+        oldValues: {
           isActive: true,
         },
-      });
 
-      if (activeSites > 0) {
-        throw new ConflictException(
-          'Cannot deactivate a project with active sites',
-        );
-      }
-
-      const result = await tx.project.updateMany({
-        where: {
-          id: projectId,
-          companyId,
-          isActive: true,
-        },
-
-        data: {
+        newValues: {
           isActive: false,
         },
-      });
-
-      if (result.count !== 1) {
-        throw new ConflictException(
-          'Project could not be deactivated',
-        );
-      }
-
-      await tx.auditLog.create({
-        data: {
-          companyId,
-          userId,
-
-          module: 'projects',
-          action: 'DEACTIVATE',
-          recordId: projectId,
-
-          oldValues: {
-            isActive: true,
-          },
-
-          newValues: {
-            isActive: false,
-          },
-        },
-      });
-
-      return {
-        message: 'Project deactivated successfully',
-        projectId,
-      };
+      },
     });
-  }
+
+    return {
+      message: 'Project deactivated successfully',
+      projectId,
+    };
+  });
+}
 }

@@ -5,34 +5,83 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 
-import { JwtService } from '@nestjs/jwt';
-
-import { PrismaService } from '../prisma/prisma.service.js';
+import {
+  JwtService,
+} from '@nestjs/jwt';
 
 import type {
-  AuthenticatedRequest,
+  Request,
+} from 'express';
+
+import {
+  PrismaService,
+} from '../prisma/prisma.service.js';
+
+import type {
   AuthenticatedUser,
-  JwtPayload,
 } from './auth.types.js';
 
+// =====================================================
+// JWT PAYLOAD
+// =====================================================
+
+interface JwtPayload {
+  sub: string;
+
+  username?: string;
+
+  iat?: number;
+  exp?: number;
+
+  iss?: string;
+  aud?: string;
+}
+
+// =====================================================
+// REQUEST WITH AUTHENTICATED USER
+// =====================================================
+
+interface RequestWithUser
+  extends Request {
+  user?: AuthenticatedUser;
+}
+
+// =====================================================
+// JWT AUTH GUARD
+// =====================================================
+
 @Injectable()
-export class JwtAuthGuard implements CanActivate {
+export class JwtAuthGuard
+  implements CanActivate
+{
   constructor(
-    private readonly jwtService: JwtService,
-    private readonly prisma: PrismaService,
+    private readonly jwtService:
+      JwtService,
+
+    private readonly prisma:
+      PrismaService,
   ) {}
+
+  // ===================================================
+  // CAN ACTIVATE
+  // ===================================================
 
   async canActivate(
     context: ExecutionContext,
   ): Promise<boolean> {
-
-    // 1. Get the incoming HTTP request
     const request =
-      context.switchToHttp()
-        .getRequest<AuthenticatedRequest>();
+      context
+        .switchToHttp()
+        .getRequest<RequestWithUser>();
 
-    // 2. Extract the Bearer token
-    const token = this.extractToken(request);
+    // -------------------------------------------------
+    // 1. READ TOKEN
+    // -------------------------------------------------
+
+    const token =
+      this.extractBearerToken(
+        request,
+      );
 
     if (!token) {
       throw new UnauthorizedException(
@@ -40,99 +89,235 @@ export class JwtAuthGuard implements CanActivate {
       );
     }
 
-    // 3. Verify the JWT
+    // -------------------------------------------------
+    // 2. VERIFY TOKEN
+    // -------------------------------------------------
+
     let payload: JwtPayload;
 
     try {
       payload =
-        await this.jwtService.verifyAsync<JwtPayload>(
-          token,
-          {
-            issuer: 'hse-api',
-            audience: 'hse-web',
-          },
-        );
+        await this.jwtService
+          .verifyAsync<JwtPayload>(
+            token,
+            {
+              issuer:
+                'hse-api',
+
+              audience:
+                'hse-web',
+            },
+          );
     } catch {
       throw new UnauthorizedException(
-        'Invalid or expired access token',
+        'Invalid or expired token',
       );
     }
 
-    // 4. Validate the expected payload
-    if (
-      !payload ||
-      typeof payload.sub !== 'string' ||
-      !payload.sub ||
-      typeof payload.username !== 'string'
-    ) {
+    if (!payload.sub) {
       throw new UnauthorizedException(
-        'Invalid access token',
+        'Invalid token payload',
       );
     }
 
-    // 5. Retrieve the current user from PostgreSQL
-    const user = await this.prisma.user.findUnique({
-      where: {
-        id: payload.sub,
-      },
+    // -------------------------------------------------
+    // 3. RELOAD USER FROM DATABASE
+    //
+    // IMPORTANT:
+    // We intentionally reload the user on every
+    // protected request.
+    //
+    // This means disabling an account immediately
+    // invalidates an existing JWT.
+    // -------------------------------------------------
 
-      include: {
-        role: true,
-        company: true,
-      },
-    });
+    const user =
+      await this.prisma.user.findFirst({
+        where: {
+          id:
+            payload.sub,
 
-    // 6. Check that the account is still active
-    if (
-      !user ||
-      !user.isActive ||
-      !user.role.isActive ||
-      !user.company.isActive
-    ) {
+          isActive:
+            true,
+        },
+
+        include: {
+          company:
+            true,
+
+          role:
+            true,
+        },
+      });
+
+    if (!user) {
       throw new UnauthorizedException(
-        'Account is unavailable',
+        'Account is inactive or unavailable',
       );
     }
 
-    // 7. Create a safe user object
-    const authenticatedUser: AuthenticatedUser = {
-      id: user.id,
-      username: user.username,
-      email: user.email,
+    // -------------------------------------------------
+    // 4. COMPANY MUST STILL BE ACTIVE
+    // -------------------------------------------------
 
-      role: {
-        id: user.role.id,
-        name: user.role.name,
-      },
+    if (!user.company.isActive) {
+      throw new UnauthorizedException(
+        'Company account is inactive',
+      );
+    }
+
+    // -------------------------------------------------
+    // 5. ROLE MUST STILL BE ACTIVE
+    // -------------------------------------------------
+
+    if (!user.role.isActive) {
+      throw new UnauthorizedException(
+        'User role is inactive',
+      );
+    }
+
+    // -------------------------------------------------
+    // 6. LOAD ROLE-PERMISSION IDS
+    //
+    // Your RolePermission table contains:
+    //
+    // roleId
+    // permissionId
+    //
+    // It does NOT expose:
+    //
+    // rolePermission.permission
+    //
+    // so we load the IDs first.
+    // -------------------------------------------------
+
+    const rolePermissions =
+      await this.prisma
+        .rolePermission
+        .findMany({
+          where: {
+            roleId:
+              user.roleId,
+          },
+
+          select: {
+            permissionId:
+              true,
+          },
+        });
+
+    // -------------------------------------------------
+    // 7. LOAD PERMISSION RECORDS
+    // -------------------------------------------------
+
+    const permissionIds =
+      rolePermissions.map(
+        item =>
+          item.permissionId,
+      );
+
+    const permissionRecords =
+      permissionIds.length > 0
+        ? await this.prisma
+            .permission
+            .findMany({
+              where: {
+                id: {
+                  in:
+                    permissionIds,
+                },
+              },
+
+              select: {
+                module:
+                  true,
+
+                action:
+                  true,
+              },
+            })
+        : [];
+
+    // -------------------------------------------------
+    // 8. CONVERT TO module:action STRINGS
+    //
+    // Example:
+    //
+    // sites:read
+    // sites:create
+    // users:update
+    // -------------------------------------------------
+
+    const permissions =
+      permissionRecords.map(
+        permission =>
+          `${permission.module}:${permission.action}`,
+      );
+
+    // -------------------------------------------------
+    // 9. ATTACH AUTHENTICATED USER
+    // -------------------------------------------------
+
+    request.user = {
+      id:
+        user.id,
+
+      username:
+        user.username,
+
+      email:
+        user.email,
 
       company: {
-        id: user.company.id,
-        name: user.company.name,
+        id:
+          user.company.id,
+
+        name:
+          user.company.name,
       },
+
+      role: {
+        id:
+          user.role.id,
+
+        name:
+          user.role.name,
+      },
+
+      permissions,
     };
 
-    // 8. Attach the authenticated user to the request
-    request.user = authenticatedUser;
-
-    // 9. Allow the request to continue
     return true;
   }
 
-  private extractToken(
-    request: AuthenticatedRequest,
-  ): string | undefined {
+  // ===================================================
+  // EXTRACT BEARER TOKEN
+  // ===================================================
 
+  private extractBearerToken(
+    request: Request,
+  ): string | null {
     const authorization =
-      request.headers.authorization;
+      request.headers
+        .authorization;
 
     if (!authorization) {
-      return undefined;
+      return null;
     }
 
-    const match = /^Bearer ([^\s]+)$/i.exec(
-      authorization,
-    );
+    const [
+      type,
+      token,
+    ] =
+      authorization.split(' ');
 
-    return match?.[1];
+    if (
+      type !== 'Bearer' ||
+      !token
+    ) {
+      return null;
+    }
+
+    return token;
   }
 }

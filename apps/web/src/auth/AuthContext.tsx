@@ -1,12 +1,9 @@
-/* eslint-disable react-refresh/only-export-components */
-/* eslint-disable react-hooks/purity */
-/* eslint-disable react-hooks/set-state-in-effect */
 import {
   createContext,
-  useContext,
-  useEffect,
-  useState,
   useCallback,
+  useContext,
+  useMemo,
+  useState,
 } from 'react';
 
 import type {
@@ -18,231 +15,546 @@ import {
   getErrorMessage,
 } from '../lib/api';
 
-// ---------------------------------------
-// Types
-// ---------------------------------------
+// =====================================================
+// TYPES
+// =====================================================
+
+export interface AuthCompany {
+  id: string;
+  name: string;
+}
+
+export interface AuthRole {
+  id: string;
+  name: string;
+}
 
 export interface AuthUser {
   id: string;
   username: string;
   email: string;
 
-  role: {
-    id: string;
-    name: string;
-  };
+  company: AuthCompany;
 
-  company: {
-    id: string;
-    name: string;
-  };
+  role: AuthRole;
+
+  permissions: string[];
 }
 
-interface LoginResponse {
-  access_token: string;
-  token_type: string;
-  expires_in: number;
-}
-
-interface ProfileResponse {
-  user: AuthUser;
-}
-
-interface Session {
-  token: string;
-  user: AuthUser;
-  expiresAt: number;
-}
-
-interface AuthContextType {
-  user: AuthUser | null;
+interface AuthContextValue {
   token: string | null;
+
+  user: AuthUser | null;
+
   isAuthenticated: boolean;
+
   login: (
     username: string,
     password: string,
   ) => Promise<void>;
+
   logout: () => void;
+
+  refreshUser: () => Promise<void>;
+
+  hasPermission: (
+    permission: string,
+  ) => boolean;
+
+  hasAnyPermission: (
+    permissions: string[],
+  ) => boolean;
 }
 
-// ---------------------------------------
-// Create context
-// ---------------------------------------
+// =====================================================
+// CONTEXT
+// =====================================================
 
 const AuthContext =
-  createContext<AuthContextType | undefined>(
+  createContext<AuthContextValue | undefined>(
     undefined,
   );
 
-// ---------------------------------------
-// Provider
-// ---------------------------------------
+// =====================================================
+// HELPERS
+// =====================================================
+
+function isRecord(
+  value: unknown,
+): value is Record<string, unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null
+  );
+}
+
+function readString(
+  object: Record<string, unknown>,
+  key: string,
+): string | null {
+  const value =
+    object[key];
+
+  return typeof value === 'string'
+    ? value
+    : null;
+}
+
+// =====================================================
+// TOKEN EXTRACTION
+// =====================================================
+
+function extractAccessToken(
+  responseData: unknown,
+): string | null {
+  if (!isRecord(responseData)) {
+    return null;
+  }
+
+  // Support:
+  // {
+  //   "accessToken": "..."
+  // }
+
+  const accessToken =
+    readString(
+      responseData,
+      'accessToken',
+    );
+
+  if (accessToken) {
+    return accessToken;
+  }
+
+  // Support:
+  // {
+  //   "access_token": "..."
+  // }
+
+  const accessTokenSnakeCase =
+    readString(
+      responseData,
+      'access_token',
+    );
+
+  if (accessTokenSnakeCase) {
+    return accessTokenSnakeCase;
+  }
+
+  // Support:
+  // {
+  //   "token": "..."
+  // }
+
+  const token =
+    readString(
+      responseData,
+      'token',
+    );
+
+  if (token) {
+    return token;
+  }
+
+  // Support:
+  // {
+  //   "jwt": "..."
+  // }
+
+  const jwt =
+    readString(
+      responseData,
+      'jwt',
+    );
+
+  if (jwt) {
+    return jwt;
+  }
+
+  // Support nested responses:
+  //
+  // {
+  //   "data": {
+  //     "accessToken": "..."
+  //   }
+  // }
+  //
+  // or
+  //
+  // {
+  //   "data": {
+  //     "access_token": "..."
+  //   }
+  // }
+
+  const nestedData =
+    responseData.data;
+
+  if (isRecord(nestedData)) {
+    const nestedAccessToken =
+      readString(
+        nestedData,
+        'accessToken',
+      );
+
+    if (nestedAccessToken) {
+      return nestedAccessToken;
+    }
+
+    const nestedAccessTokenSnakeCase =
+      readString(
+        nestedData,
+        'access_token',
+      );
+
+    if (
+      nestedAccessTokenSnakeCase
+    ) {
+      return nestedAccessTokenSnakeCase;
+    }
+
+    const nestedToken =
+      readString(
+        nestedData,
+        'token',
+      );
+
+    if (nestedToken) {
+      return nestedToken;
+    }
+  }
+
+  return null;
+}
+
+// =====================================================
+// PROVIDER
+// =====================================================
 
 export function AuthProvider({
   children,
 }: {
   children: ReactNode;
 }) {
-  const [session, setSession] =
-    useState<Session | null>(null);
+  // Token stays in memory intentionally.
+  //
+  // Refreshing the browser signs the user out,
+  // matching the security approach we used earlier.
 
- const logout = useCallback(() => {
-  setSession(null);
-}, []);
-  // Automatically clear an expired session.
-  useEffect(() => {
-    if (!session) {
-      return;
-    }
+  const [
+    token,
+    setToken,
+  ] =
+    useState<string | null>(
+      null,
+    );
 
-    const remainingTime =
-      session.expiresAt - Date.now();
+  const [
+    user,
+    setUser,
+  ] =
+    useState<AuthUser | null>(
+      null,
+    );
 
-    if (remainingTime <= 0) {
-      setSession(null);
-      return;
-    }
+  // ===================================================
+  // LOAD CURRENT USER
+  // ===================================================
 
-    const timeout = window.setTimeout(() => {
-      setSession(null);
-    }, remainingTime);
+  const loadCurrentUser =
+    useCallback(
+      async (
+        currentToken: string,
+      ): Promise<AuthUser> => {
+        const response =
+          await fetch(
+            `${API_URL}/auth/me`,
+            {
+              method: 'GET',
 
-    return () => {
-      window.clearTimeout(timeout);
-    };
-  }, [session]);
+              headers: {
+                Authorization:
+                  `Bearer ${currentToken}`,
+              },
+            },
+          );
 
-  // -------------------------------------
-  // Login
-  // -------------------------------------
+        if (!response.ok) {
+          throw new Error(
+            await getErrorMessage(
+              response,
+            ),
+          );
+        }
 
-  const login = async (
-    username: string,
-    password: string,
-  ): Promise<void> => {
-    // Remove any previous session.
-    setSession(null);
+        const data: unknown =
+          await response.json();
 
-    let response: Response;
+        if (!isRecord(data)) {
+          throw new Error(
+            'Invalid user response from server.',
+          );
+        }
 
-    try {
-      response = await fetch(
-        `${API_URL}/auth/login`,
-        {
-          method: 'POST',
+        return data as unknown as AuthUser;
+      },
+      [],
+    );
 
-          headers: {
-            'Content-Type': 'application/json',
-          },
+  // ===================================================
+  // LOGIN
+  // ===================================================
 
-          body: JSON.stringify({
-            username,
-            password,
-          }),
-        },
-      );
-    } catch {
-      throw new Error(
-        'Cannot connect to the server. Check that the backend is running.',
-      );
-    }
+  const login =
+    useCallback(
+      async (
+        username: string,
+        password: string,
+      ): Promise<void> => {
+        const response =
+          await fetch(
+            `${API_URL}/auth/login`,
+            {
+              method: 'POST',
 
-    if (!response.ok) {
-      if (response.status === 401) {
-        throw new Error(
-          'Invalid username or password.',
+              headers: {
+                'Content-Type':
+                  'application/json',
+              },
+
+              body:
+                JSON.stringify({
+                  username:
+                    username.trim(),
+
+                  password,
+                }),
+            },
+          );
+
+        // ---------------------------------------------
+        // LOGIN FAILURE
+        // ---------------------------------------------
+
+        if (!response.ok) {
+          throw new Error(
+            await getErrorMessage(
+              response,
+            ),
+          );
+        }
+
+        // ---------------------------------------------
+        // READ LOGIN RESPONSE
+        // ---------------------------------------------
+
+        const responseData: unknown =
+          await response.json();
+
+        // ---------------------------------------------
+        // GET JWT
+        // ---------------------------------------------
+
+        const newToken =
+          extractAccessToken(
+            responseData,
+          );
+
+        if (!newToken) {
+          throw new Error(
+            'Login succeeded, but the server response did not contain a recognized access token.',
+          );
+        }
+
+        // ---------------------------------------------
+        // GET CURRENT ROLE + PERMISSIONS
+        // ---------------------------------------------
+
+        const currentUser =
+          await loadCurrentUser(
+            newToken,
+          );
+
+        // Only mark authentication successful after
+        // /auth/me also succeeds.
+
+        setToken(
+          newToken,
         );
-      }
 
-      throw new Error(
-        await getErrorMessage(response),
-      );
-    }
+        setUser(
+          currentUser,
+        );
+      },
+      [
+        loadCurrentUser,
+      ],
+    );
 
-    const loginData =
-      (await response.json()) as LoginResponse;
+  // ===================================================
+  // LOGOUT
+  // ===================================================
 
-    if (
-      !loginData.access_token ||
-      !Number.isFinite(loginData.expires_in) ||
-      loginData.expires_in <= 0
-    ) {
-      throw new Error(
-        'The server returned an invalid login response.',
-      );
-    }
+  const logout =
+    useCallback(
+      () => {
+        setToken(
+          null,
+        );
 
-    const expiresAt =
-      Date.now() +
-      loginData.expires_in * 1000;
+        setUser(
+          null,
+        );
+      },
+      [],
+    );
 
-    // Verify the new token against /auth/me.
-    let profileResponse: Response;
+  // ===================================================
+  // REFRESH USER
+  // ===================================================
 
-    try {
-      profileResponse = await fetch(
-        `${API_URL}/auth/me`,
-        {
-          method: 'GET',
+  const refreshUser =
+    useCallback(
+      async (): Promise<void> => {
+        if (!token) {
+          return;
+        }
 
-          headers: {
-            Authorization:
-              `Bearer ${loginData.access_token}`,
-          },
-        },
-      );
-    } catch {
-      throw new Error(
-        'Login succeeded, but the user profile could not be loaded.',
-      );
-    }
+        try {
+          const currentUser =
+            await loadCurrentUser(
+              token,
+            );
 
-    if (!profileResponse.ok) {
-      throw new Error(
-        'Unable to verify your session. Please try again.',
-      );
-    }
+          setUser(
+            currentUser,
+          );
+        } catch {
+          setToken(
+            null,
+          );
 
-    const profileData =
-      (await profileResponse.json()) as ProfileResponse;
+          setUser(
+            null,
+          );
+        }
+      },
+      [
+        token,
+        loadCurrentUser,
+      ],
+    );
 
-    if (!profileData.user?.id) {
-      throw new Error(
-        'Invalid user profile returned by the server.',
-      );
-    }
+  // ===================================================
+  // PERMISSION CHECK
+  // ===================================================
 
-    // Save session in React memory.
-    setSession({
-      token: loginData.access_token,
-      user: profileData.user,
-      expiresAt,
-    });
-  };
+  const hasPermission =
+    useCallback(
+      (
+        permission: string,
+      ): boolean => {
+        if (!user) {
+          return false;
+        }
 
-  const value: AuthContextType = {
-    user: session?.user ?? null,
-    token: session?.token ?? null,
-    isAuthenticated:
-      Boolean(session) &&
-      (session?.expiresAt ?? 0) > Date.now(),
-    login,
-    logout,
-  };
+        return (
+          user.permissions?.includes(
+            permission,
+          ) ?? false
+        );
+      },
+      [
+        user,
+      ],
+    );
+
+  // ===================================================
+  // ANY PERMISSION CHECK
+  // ===================================================
+
+  const hasAnyPermission =
+    useCallback(
+      (
+        permissions: string[],
+      ): boolean => {
+        if (!user) {
+          return false;
+        }
+
+        return permissions.some(
+          permission =>
+            user.permissions?.includes(
+              permission,
+            ) ?? false,
+        );
+      },
+      [
+        user,
+      ],
+    );
+
+  // ===================================================
+  // CONTEXT VALUE
+  // ===================================================
+
+  const value =
+    useMemo<AuthContextValue>(
+      () => ({
+        token,
+
+        user,
+
+        isAuthenticated:
+          Boolean(
+            token &&
+            user,
+          ),
+
+        login,
+
+        logout,
+
+        refreshUser,
+
+        hasPermission,
+
+        hasAnyPermission,
+      }),
+      [
+        token,
+        user,
+        login,
+        logout,
+        refreshUser,
+        hasPermission,
+        hasAnyPermission,
+      ],
+    );
+
+  // ===================================================
+  // RENDER
+  // ===================================================
 
   return (
-    <AuthContext.Provider value={value}>
+    <AuthContext.Provider
+      value={value}
+    >
       {children}
     </AuthContext.Provider>
   );
 }
 
-// ---------------------------------------
-// Custom authentication hook
-// ---------------------------------------
-
-export function useAuth(): AuthContextType {
-  const context = useContext(AuthContext);
+// =====================================================
+// HOOK
+// =====================================================
+// eslint-disable-next-line react-refresh/only-export-components
+export function useAuth():
+  AuthContextValue {
+  const context =
+    useContext(
+      AuthContext,
+    );
 
   if (!context) {
     throw new Error(
