@@ -19,6 +19,7 @@ import AppLayout from './layouts/AppLayout';
 import ProtectedRoute from './auth/ProtectedRoute';
 import PermissionRoute from './auth/PermissionRoute';
 import PermitsPage from './pages/PermitsPage';
+import InspectionsPage from './pages/InspectionsPage';
 
 // =====================================================
 // APP ROUTES
@@ -146,6 +147,11 @@ export default function App() {
                 <EmployeesPage />
               }
             />
+          </Route>
+
+          {/* INSPECTIONS */}
+          <Route element={<PermissionRoute permission="inspections:read" />}>
+            <Route path="inspections" element={<InspectionsPage />} />
           </Route>
 
           {/* USERS */}

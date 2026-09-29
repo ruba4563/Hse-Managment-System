@@ -33,11 +33,12 @@ model Company {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  departments Department[]
-  projects    Project[]
-  employees   Employee[]
-  users       User[]
-  auditLogs   AuditLog[]
+  departments     Department[]
+  projects        Project[]
+  employees       Employee[]
+  users           User[]
+  auditLogs       AuditLog[]
+  inspectionTypes InspectionType[]
 
   @@map("companies")
 }
@@ -84,8 +85,9 @@ model Project {
 
   company Company @relation(fields: [companyId], references: [id])
 
-  sites   Site[]
-  permits Permit[]
+  sites       Site[]
+  permits     Permit[]
+  inspections Inspection[]
 
   @@unique([companyId, code])
   @@index([companyId])
@@ -110,8 +112,9 @@ model Site {
   updatedAt DateTime @updatedAt
   project   Project  @relation(fields: [projectId], references: [id])
 
-  userAccess UserSiteAccess[]
-  permits    Permit[]
+  userAccess  UserSiteAccess[]
+  permits     Permit[]
+  inspections Inspection[]
 
   @@unique([projectId, code])
   @@index([projectId])
@@ -234,6 +237,10 @@ model User {
   siteAccess UserSiteAccess[]
   auditLogs  AuditLog[]
 
+  // ===================================================
+  // PERMITS
+  // ===================================================
+
   requestedPermits Permit[] @relation("PermitRequestedBy")
   approvedPermits  Permit[] @relation("PermitApprovedBy")
   rejectedPermits  Permit[] @relation("PermitRejectedBy")
@@ -242,6 +249,20 @@ model User {
   completedPermitChecklistItems PermitChecklistItem[] @relation("PermitChecklistCompletedBy")
 
   permitApprovalHistory PermitApproval[] @relation("PermitApprovalHistoryApprover")
+
+  // ===================================================
+  // INSPECTIONS
+  // ===================================================
+
+  inspectionsPerformed Inspection[] @relation("InspectionInspector")
+
+  inspectionsSubmitted Inspection[] @relation("InspectionSubmittedBy")
+
+  inspectionsApproved Inspection[] @relation("InspectionApprovedBy")
+
+  inspectionChecklistResponses InspectionChecklistResponse[] @relation("InspectionChecklistRespondedBy")
+
+  inspectionFindingsCreated InspectionFinding[] @relation("InspectionFindingCreatedBy")
 
   @@index([companyId])
   @@index([roleId])
@@ -450,4 +471,249 @@ model PermitApproval {
   @@index([approverId])
   @@index([permitId, approvalDate])
   @@map("permit_approvals")
+}
+
+// =====================================================
+// INSPECTION MANAGEMENT
+// =====================================================
+
+enum InspectionCategory {
+  SITE
+  EQUIPMENT
+  VEHICLE
+}
+
+enum InspectionStatus {
+  DRAFT
+  SCHEDULED
+  IN_PROGRESS
+  SUBMITTED
+  APPROVED
+  REJECTED
+  CLOSED
+}
+
+enum InspectionResponseResult {
+  PASS
+  FAIL
+  NOT_APPLICABLE
+}
+
+enum InspectionFindingSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum InspectionFindingType {
+  DEFECT
+  OBSERVATION
+  UNSAFE_ACT
+  UNSAFE_CONDITION
+}
+
+// =====================================================
+// INSPECTION TYPE
+// =====================================================
+
+model InspectionType {
+  id        String @id @default(uuid()) @db.Uuid
+  companyId String @db.Uuid
+
+  name        String
+  code        String
+  category    InspectionCategory
+  description String?
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  templateItems InspectionTemplateItem[]
+  inspections   Inspection[]
+
+  @@unique([companyId, code])
+  @@unique([companyId, name])
+  @@index([companyId])
+  @@index([category])
+  @@map("inspection_types")
+}
+
+// =====================================================
+// INSPECTION TEMPLATE ITEM
+// =====================================================
+
+model InspectionTemplateItem {
+  id               String @id @default(uuid()) @db.Uuid
+  inspectionTypeId String @db.Uuid
+
+  itemText String
+
+  sectionName String?
+
+  isMandatory Boolean @default(true)
+
+  displayOrder Int @default(0)
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  inspectionType InspectionType @relation(fields: [inspectionTypeId], references: [id], onDelete: Cascade)
+
+  responses InspectionChecklistResponse[]
+
+  @@index([inspectionTypeId])
+  @@index([inspectionTypeId, isActive])
+  @@index([inspectionTypeId, displayOrder])
+  @@map("inspection_template_items")
+}
+
+// =====================================================
+// INSPECTION
+// =====================================================
+
+model Inspection {
+  id String @id @default(uuid()) @db.Uuid
+
+  inspectionNumber String @unique
+
+  inspectionTypeId String @db.Uuid
+  projectId        String @db.Uuid
+  siteId           String @db.Uuid
+  inspectorId      String @db.Uuid
+
+  title       String
+  description String?
+
+  scheduledAt DateTime?
+  startedAt   DateTime?
+  submittedAt DateTime?
+  approvedAt  DateTime?
+  closedAt    DateTime?
+
+  submittedById String? @db.Uuid
+  approvedById  String? @db.Uuid
+
+  approvalComments String?
+  rejectionReason  String?
+
+  status InspectionStatus @default(DRAFT)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  inspectionType InspectionType @relation(fields: [inspectionTypeId], references: [id])
+
+  project Project @relation(fields: [projectId], references: [id])
+
+  site Site @relation(fields: [siteId], references: [id])
+
+  inspector User @relation("InspectionInspector", fields: [inspectorId], references: [id])
+
+  submittedBy User? @relation("InspectionSubmittedBy", fields: [submittedById], references: [id])
+
+  approvedBy User? @relation("InspectionApprovedBy", fields: [approvedById], references: [id])
+
+  checklistResponses InspectionChecklistResponse[]
+  findings           InspectionFinding[]
+
+  @@index([inspectionTypeId])
+  @@index([projectId])
+  @@index([siteId])
+  @@index([inspectorId])
+  @@index([submittedById])
+  @@index([approvedById])
+  @@index([status])
+  @@index([scheduledAt])
+  @@index([createdAt])
+  @@map("inspections")
+}
+
+// =====================================================
+// INSPECTION CHECKLIST RESPONSE
+// =====================================================
+
+model InspectionChecklistResponse {
+  id String @id @default(uuid()) @db.Uuid
+
+  inspectionId String @db.Uuid
+
+  templateItemId String @db.Uuid
+
+  result InspectionResponseResult?
+
+  comments String?
+
+  respondedById String?   @db.Uuid
+  respondedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  inspection Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+
+  templateItem InspectionTemplateItem @relation(fields: [templateItemId], references: [id])
+
+  respondedBy User? @relation("InspectionChecklistRespondedBy", fields: [respondedById], references: [id])
+
+  findings InspectionFinding[]
+
+  @@unique([inspectionId, templateItemId])
+  @@index([inspectionId])
+  @@index([templateItemId])
+  @@index([respondedById])
+  @@index([result])
+  @@map("inspection_checklist_responses")
+}
+
+// =====================================================
+// INSPECTION FINDING
+// =====================================================
+
+model InspectionFinding {
+  id String @id @default(uuid()) @db.Uuid
+
+  inspectionId String @db.Uuid
+
+  checklistResponseId String? @db.Uuid
+
+  createdById String @db.Uuid
+
+  findingType InspectionFindingType
+
+  severity InspectionFindingSeverity
+
+  title       String
+  description String
+
+  recommendedAction String?
+
+  location String?
+
+  isClosed Boolean @default(false)
+
+  closedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  inspection Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+
+  checklistResponse InspectionChecklistResponse? @relation(fields: [checklistResponseId], references: [id], onDelete: SetNull)
+
+  createdBy User @relation("InspectionFindingCreatedBy", fields: [createdById], references: [id])
+
+  @@index([inspectionId])
+  @@index([checklistResponseId])
+  @@index([createdById])
+  @@index([findingType])
+  @@index([severity])
+  @@index([isClosed])
+  @@map("inspection_findings")
 }

@@ -50,6 +50,8 @@ import {
   UsersModule,
 } from './users/users.module.js';
 
+import { InspectionsModule } from './inspections/inspections.module.js';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -73,6 +75,8 @@ import {
     UsersModule,
 
     PermitsModule,
+
+    InspectionsModule,
   ],
 
   controllers: [
