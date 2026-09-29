@@ -17,6 +17,7 @@
     "lint": "oxlint --type-aware src/ test/",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:inspections": "tsc -p tsconfig.inspections-test.json && node --test dist-inspections-test/integration-tests/stage7.inspections.integration.test.js",
     "test:cov": "vitest run --coverage",
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
     "test:e2e": "vitest run --config ./vitest.config.e2e.ts"

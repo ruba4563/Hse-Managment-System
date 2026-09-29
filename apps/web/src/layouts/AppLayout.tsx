@@ -11,9 +11,10 @@ export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const { user, logout } = useAuth();
+  const { user, logout, hasPermission } = useAuth();
 
   const pageTitles: Record<string, string> = {
+    '/inspections': 'Inspection Management',
     '/dashboard': 'Dashboard',
     '/companies': 'Company Management',
     '/departments': 'Department Management',
@@ -126,6 +127,11 @@ export default function AppLayout() {
     Permit Management
 </NavLink>
 
+          {hasPermission('inspections:read') && (
+            <NavLink to="/inspections" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
+              Inspection Management
+            </NavLink>
+          )}
         </nav>
 
         <div className="sidebar-bottom">

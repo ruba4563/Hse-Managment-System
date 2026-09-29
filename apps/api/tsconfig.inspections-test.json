@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist-inspections-test",
+    "declaration": false,
+    "incremental": false
+  },
+  "include": ["integration-tests/stage7.inspections.integration.test.ts"],
+  "exclude": ["node_modules", "dist", "dist-inspections-test"]
+}
