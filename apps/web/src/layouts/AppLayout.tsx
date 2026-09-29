@@ -20,6 +20,8 @@ export default function AppLayout() {
     '/projects': 'Project Management',
     '/sites': 'Site Management',
     '/employees': 'Employee Management',
+    '/permits':
+  'Permit Management',
   };
 
   const pageTitle =
@@ -115,6 +117,15 @@ export default function AppLayout() {
 >
   Employee Management
 </NavLink>
+<NavLink
+  to="/permits"
+  className={({ isActive }) =>
+    `sidebar-link ${isActive ? 'active' : ''}`
+  }
+>
+    Permit Management
+</NavLink>
+
         </nav>
 
         <div className="sidebar-bottom">

@@ -18,6 +18,7 @@ import AppLayout from './layouts/AppLayout';
 
 import ProtectedRoute from './auth/ProtectedRoute';
 import PermissionRoute from './auth/PermissionRoute';
+import PermitsPage from './pages/PermitsPage';
 
 // =====================================================
 // APP ROUTES
@@ -166,6 +167,20 @@ export default function App() {
 
         </Route>
       </Route>
+      <Route
+  element={
+    <PermissionRoute
+      permission="permits:read"
+    />
+  }
+>
+  <Route
+    path="permits"
+    element={
+      <PermitsPage />
+    }
+  />
+</Route>
 
       {/* =============================================
           FALLBACK

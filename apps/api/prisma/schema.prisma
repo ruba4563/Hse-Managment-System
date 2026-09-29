@@ -84,7 +84,8 @@ model Project {
 
   company Company @relation(fields: [companyId], references: [id])
 
-  sites Site[]
+  sites   Site[]
+  permits Permit[]
 
   @@unique([companyId, code])
   @@index([companyId])
@@ -110,6 +111,7 @@ model Site {
   project   Project  @relation(fields: [projectId], references: [id])
 
   userAccess UserSiteAccess[]
+  permits    Permit[]
 
   @@unique([projectId, code])
   @@index([projectId])
@@ -232,6 +234,15 @@ model User {
   siteAccess UserSiteAccess[]
   auditLogs  AuditLog[]
 
+  requestedPermits Permit[] @relation("PermitRequestedBy")
+  approvedPermits  Permit[] @relation("PermitApprovedBy")
+  rejectedPermits  Permit[] @relation("PermitRejectedBy")
+  closedPermits    Permit[] @relation("PermitClosedBy")
+
+  completedPermitChecklistItems PermitChecklistItem[] @relation("PermitChecklistCompletedBy")
+
+  permitApprovalHistory PermitApproval[] @relation("PermitApprovalHistoryApprover")
+
   @@index([companyId])
   @@index([roleId])
   @@map("users")
@@ -284,4 +295,159 @@ model AuditLog {
   @@index([module, recordId])
   @@index([createdAt])
   @@map("audit_logs")
+}
+
+// =====================================================
+// PERMIT MANAGEMENT
+// =====================================================
+
+enum PermitStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  ACTIVE
+  REJECTED
+  CLOSED
+}
+
+enum PermitApprovalDecision {
+  APPROVED
+  REJECTED
+}
+
+model PermitType {
+  id          String  @id @default(uuid()) @db.Uuid
+  name        String  @unique
+  description String?
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  permits Permit[]
+
+  @@map("permit_types")
+}
+
+model Permit {
+  id String @id @default(uuid()) @db.Uuid
+
+  permitNumber String @unique
+
+  permitTypeId  String @db.Uuid
+  projectId     String @db.Uuid
+  siteId        String @db.Uuid
+  requestedById String @db.Uuid
+
+  location             String?
+  contractorDepartment String?
+
+  requiredPpe     String[] @default([])
+  hazards         String[] @default([])
+  controlMeasures String[] @default([])
+
+  startDateTime DateTime
+  endDateTime   DateTime
+
+  status PermitStatus @default(DRAFT)
+
+  description String
+
+  submittedAt DateTime?
+
+  approvedAt   DateTime?
+  approvedById String?   @db.Uuid
+
+  rejectedAt      DateTime?
+  rejectedById    String?   @db.Uuid
+  rejectionReason String?
+
+  activatedAt DateTime?
+
+  closedAt   DateTime?
+  closedById String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  permitType PermitType @relation(fields: [permitTypeId], references: [id])
+  project    Project    @relation(fields: [projectId], references: [id])
+  site       Site       @relation(fields: [siteId], references: [id])
+
+  requestedBy User  @relation("PermitRequestedBy", fields: [requestedById], references: [id])
+  approvedBy  User? @relation("PermitApprovedBy", fields: [approvedById], references: [id])
+  rejectedBy  User? @relation("PermitRejectedBy", fields: [rejectedById], references: [id])
+  closedBy    User? @relation("PermitClosedBy", fields: [closedById], references: [id])
+
+  checklistItems PermitChecklistItem[]
+  approvals      PermitApproval[]
+
+  @@index([permitTypeId])
+  @@index([projectId])
+  @@index([siteId])
+  @@index([requestedById])
+  @@index([approvedById])
+  @@index([rejectedById])
+  @@index([closedById])
+  @@index([status])
+  @@index([startDateTime])
+  @@index([endDateTime])
+  @@map("permits")
+}
+
+// =====================================================
+// PERMIT CHECKLIST ITEM
+// =====================================================
+
+model PermitChecklistItem {
+  id       String @id @default(uuid()) @db.Uuid
+  permitId String @db.Uuid
+
+  itemText String
+
+  isMandatory Boolean @default(true)
+  isCompleted Boolean @default(false)
+
+  displayOrder Int @default(0)
+
+  completedAt   DateTime?
+  completedById String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  permit      Permit @relation(fields: [permitId], references: [id], onDelete: Cascade)
+  completedBy User?  @relation("PermitChecklistCompletedBy", fields: [completedById], references: [id])
+
+  @@index([permitId])
+  @@index([completedById])
+  @@index([permitId, isMandatory, isCompleted])
+  @@map("permit_checklist_items")
+}
+
+// =====================================================
+// PERMIT APPROVAL HISTORY
+// =====================================================
+
+model PermitApproval {
+  id       String @id @default(uuid()) @db.Uuid
+  permitId String @db.Uuid
+
+  approverId String @db.Uuid
+
+  decision PermitApprovalDecision
+
+  comments String?
+
+  approvalDate DateTime @default(now())
+
+  createdAt DateTime @default(now())
+
+  permit   Permit @relation(fields: [permitId], references: [id], onDelete: Cascade)
+  approver User   @relation("PermitApprovalHistoryApprover", fields: [approverId], references: [id])
+
+  @@index([permitId])
+  @@index([approverId])
+  @@index([permitId, approvalDate])
+  @@map("permit_approvals")
 }
